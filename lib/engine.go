@@ -1,53 +1,54 @@
 package zbz
 
-import (
-	"fmt"
-	"log"
-	"os"
-
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-)
-
+// Engine is the main application engine that holds the router, database connection, and authenticator.
 type Engine struct {
-	R *gin.Engine
-	A *Authenticator
-	V *validator.Validate
-	D *gorm.DB
+	Auth     Auth
+	Config   Config
+	Database Database
+	Docs     Docs
+	Health   Health
+	Http     HTTP
+	Log      Logger
 }
 
+// NewEngine initializes a new Engine instance with the necessary components.
 func NewEngine() *Engine {
-	// build a router
-	r := gin.Default()
-
-	// build an authenticator
-	a, err := NewAuthenticator()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// build a validator
-	v := validator.New()
-
-	// connect to the database
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable", os.Getenv("POSTGRES_HOST"), os.Getenv("POSTGRES_USER"), os.Getenv("POSTGRES_PASSWORD"), os.Getenv("POSTGRES_DB"), os.Getenv("POSTGRES_PORT"))
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// build the engine
+	l := NewLogger()
+	c := NewConfig(l)
+	a := NewAuth(l, c)
+	db := NewDatabase(l, c)
+	d := NewDocs(l, c)
+	h := NewHTTP(l, c)
+	hp := NewHealth(l, c)
 	return &Engine{
-		R: r,
-		A: a,
-		V: v,
-		D: db,
+		Auth:     a,
+		Database: db,
+		Docs:     d,
+		Health:   hp,
+		Http:     h,
+		Log:      l,
 	}
 }
 
-// Start the engine
+// Prime the engine by setting up default endpoints
+func (e *Engine) Prime() {
+	e.Log.Info("Priming the engine...")
+
+	// Register the authentication endpoints
+	e.Http.GET("/auth/login", e.Auth.LoginHandler)
+	e.Http.POST("/auth/logout", e.Auth.LogoutHandler)
+	e.Http.POST("/auth/callback", e.Auth.CallbackHandler)
+
+	// Register the documentation endpoints
+	e.Http.GET("/openapi", e.Docs.SpecHandler)
+	e.Http.GET("/docs", e.Docs.ScalarHandler)
+
+	// Register the health check endpoints
+	e.Http.GET("/health", e.Health.HealthCheckHandler)
+}
+
+// Start the engine by running an HTTP server
 func (e *Engine) Start() {
-	e.R.Run(fmt.Sprintf(":%s", os.Getenv("API_PORT")))
+	e.Log.Info("Starting the engine...")
+	e.Http.Serve()
 }
