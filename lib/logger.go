@@ -28,13 +28,22 @@ type ZapLogger struct {
 
 // NewLogger creates a new ZapLogger with the given zap.SugaredLogger.
 func NewLogger() Logger {
-	zp, err := zap.NewProduction()
+	c := zap.Config{
+		Encoding:         "console",
+		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
+		OutputPaths:      []string{"stdout"},
+		ErrorOutputPaths: []string{"stderr"},
+		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
+	}
+
+	zp, err := c.Build()
 	if err != nil {
 		panic("failed to create zap logger: " + err.Error())
 	}
+
 	defer zp.Sync() // flushes buffer, if any
-	zl := zp.Sugar()
-	return &ZapLogger{zl}
+
+	return &ZapLogger{zp.Sugar()}
 }
 
 // Middleware logs incoming requests and their responses using the gin context.

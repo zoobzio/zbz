@@ -1,37 +1,26 @@
 package zbz
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
+	"strings"
+	"unicode"
+
+	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
+// Docs is an interface for API documentation functionality
 type Docs interface {
-	RegisterPath(uri string, dp *DocsPath)
-	RegisterModel(ref string, dm *DocsModel)
-	GenerateSpec() map[string]any
+	AddPath(op *HTTPOperation)
 	SpecHandler(ctx *gin.Context)
 	ScalarHandler(ctx *gin.Context)
-}
-
-// DocsModel represents a model in the API documentation
-type DocsModel struct {
-	Ref     string
-	Summary string
-	Example any
-}
-
-// DocsPath represents a path in the API documentation
-type DocsPath struct {
-	Uri     string
-	Summary string
 }
 
 // Docs represents the documentation structure for an API
 type ZbzDocs struct {
 	config Config
 	log    Logger
-	models map[string]*DocsModel
-	paths  map[string]*DocsPath
+	spec   *OpenAPISpec
 }
 
 // NewDocs creates a new Docs instance
@@ -39,51 +28,83 @@ func NewDocs(l Logger, c Config) Docs {
 	return &ZbzDocs{
 		config: c,
 		log:    l,
-		models: make(map[string]*DocsModel),
-		paths:  make(map[string]*DocsPath),
+		spec: &OpenAPISpec{
+			OpenAPI: "3.0.0",
+			Info: &OpenAPIInfo{
+				Title:       c.Title(),
+				Version:     c.Version(),
+				Description: c.Description(),
+			},
+			Components: &OpenAPIComponents{
+				SecuritySchemes: map[string]*OpenAPISecurityScheme{
+					"BearerAuth": {
+						Type:   "http",
+						Scheme: "bearer",
+					},
+				},
+				Schemas: make(map[string]*OpenAPISchema),
+			},
+			Paths: make(map[string]map[string]*OpenAPIPath),
+			Tags: []map[string]string{
+				{
+					"name":        "Auth",
+					"description": "Authentication related endpoints",
+				},
+			},
+		},
 	}
 }
 
-// RegisterPath adds a new path to the Docs instance
-func (d *ZbzDocs) RegisterPath(uri string, dp *DocsPath) {
-	d.paths[uri] = dp
-}
-
-// RegisterModel adds a new model to the Docs instance
-func (d *ZbzDocs) RegisterModel(ref string, dm *DocsModel) {
-	d.models[ref] = dm
-}
-
-// GenerateSpec generates the OpenAPI specification for the API documentation
-func (d *ZbzDocs) GenerateSpec() map[string]any {
-	spec := make(map[string]any)
-	spec["openapi"] = "3.0.0"
-	spec["info"] = map[string]string{
-		"title":       d.config.Title(),
-		"version":     d.config.Version(),
-		"description": d.config.Description(),
+// toPascalCase converts a string to PascalCase
+func (d *ZbzDocs) toPascalCase(s string) string {
+	words := strings.Fields(s) // splits by whitespace
+	for i, word := range words {
+		if len(word) > 0 {
+			// capitalize first rune, add rest as-is
+			runes := []rune(word)
+			runes[0] = unicode.ToUpper(runes[0])
+			words[i] = string(runes)
+		}
 	}
-	spec["paths"] = make(map[string]any)
-
-	for uri, path := range d.paths {
-		pathSpec := make(map[string]any)
-		pathSpec["summary"] = path.Summary
-		spec["paths"].(map[string]any)[uri] = pathSpec
-	}
-
-	return spec
+	return strings.Join(words, "")
 }
 
-// spec returns the Docs specification for the API
+// AddPath adds a new path to the OpenAPI specification
+func (d *ZbzDocs) AddPath(op *HTTPOperation) {
+	if d.spec.Paths[op.Path] == nil {
+		d.spec.Paths[op.Path] = make(map[string]*OpenAPIPath)
+	}
+	d.spec.Paths[op.Path][strings.ToLower(op.Method)] = &OpenAPIPath{
+		Summary:     op.Summary,
+		Description: op.Description,
+		OperationId: d.toPascalCase(op.Name),
+		Tags:        []string{op.Tag},
+		Responses: map[string]*OpenAPIResponse{
+			"200": {
+				Description: "Successful operation",
+			},
+		},
+	}
+}
+
+// AddSchema adds a new schema to the OpenAPI specification
+func (d *ZbzDocs) AddSchema(name string, schema *OpenAPISchema) {
+	d.spec.Components.Schemas[name] = schema
+}
+
+// SpecHandler generates and returns the OpenAPI specification in YAML format
 func (d *ZbzDocs) SpecHandler(ctx *gin.Context) {
-	s := d.GenerateSpec()
-	ctx.JSON(200, s)
+	spec, err := yaml.Marshal(d.spec)
+	if err != nil {
+		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate OpenAPI spec"})
+	}
+	ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", spec)
 }
 
-// docs renders the documentation page
+// ScalarHandler renders a documentation site built using Scalar: https://scalar.com/
 func (d *ZbzDocs) ScalarHandler(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "scalar.tmpl", gin.H{
-		"title":   d.config.Title,
+		"title":   d.config.Title(),
 		"openapi": "/openapi",
 	})
 }

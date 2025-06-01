@@ -4,10 +4,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Health is an interface for the health check functionality
 type Health interface {
 	HealthCheckHandler(c *gin.Context)
 }
 
+// ZbzHealth implements the Health interface
 type ZbzHealth struct {
 	config Config
 	log    Logger
