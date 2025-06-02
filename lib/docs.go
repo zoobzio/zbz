@@ -11,6 +11,7 @@ import (
 
 // Docs is an interface for API documentation functionality
 type Docs interface {
+	AddTag(name, description string)
 	AddPath(op *HTTPOperation)
 	SpecHandler(ctx *gin.Context)
 	ScalarHandler(ctx *gin.Context)
@@ -45,12 +46,7 @@ func NewDocs(l Logger, c Config) Docs {
 				Schemas: make(map[string]*OpenAPISchema),
 			},
 			Paths: make(map[string]map[string]*OpenAPIPath),
-			Tags: []map[string]string{
-				{
-					"name":        "Auth",
-					"description": "Authentication related endpoints",
-				},
-			},
+			Tags:  []map[string]string{},
 		},
 	}
 }
@@ -69,13 +65,22 @@ func (d *ZbzDocs) toPascalCase(s string) string {
 	return strings.Join(words, "")
 }
 
+// AddTag adds a new tag to the OpenAPI specification
+func (d *ZbzDocs) AddTag(name, description string) {
+	d.spec.Tags = append(d.spec.Tags, map[string]string{
+		"name":        name,
+		"description": description,
+	})
+}
+
 // AddPath adds a new path to the OpenAPI specification
 func (d *ZbzDocs) AddPath(op *HTTPOperation) {
 	if d.spec.Paths[op.Path] == nil {
 		d.spec.Paths[op.Path] = make(map[string]*OpenAPIPath)
 	}
-	d.spec.Paths[op.Path][strings.ToLower(op.Method)] = &OpenAPIPath{
-		Summary:     op.Summary,
+
+	path := &OpenAPIPath{
+		Summary:     op.Name,
 		Description: op.Description,
 		OperationId: d.toPascalCase(op.Name),
 		Tags:        []string{op.Tag},
@@ -85,6 +90,14 @@ func (d *ZbzDocs) AddPath(op *HTTPOperation) {
 			},
 		},
 	}
+
+	if op.Auth {
+		path.Security = []map[string][]string{
+			{"BearerAuth": {}},
+		}
+	}
+
+	d.spec.Paths[op.Path][strings.ToLower(op.Method)] = path
 }
 
 // AddSchema adds a new schema to the OpenAPI specification

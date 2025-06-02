@@ -1,5 +1,7 @@
 package zbz
 
+import "net/http"
+
 // Engine is the main application engine that holds the router, database connection, and authenticator.
 type Engine struct {
 	Auth     Auth
@@ -18,7 +20,7 @@ func NewEngine() *Engine {
 	a := NewAuth(l, c)
 	db := NewDatabase(l, c)
 	d := NewDocs(l, c)
-	h := NewHTTP(l, c)
+	h := NewHTTP(l, c, a)
 	hp := NewHealth(l, c)
 	return &Engine{
 		Auth:     a,
@@ -30,8 +32,9 @@ func NewEngine() *Engine {
 	}
 }
 
-// Inject registers a single HTTP operation with the engine's HTTP router & docuementer.
+// Inject registers HTTP operations with the router & documentation service.
 func (e *Engine) Inject(ops ...*HTTPOperation) {
+	e.Log.Debugf("Injecting %d operations into the engine", len(ops))
 	for _, op := range ops {
 		e.Docs.AddPath(op)
 		e.Http.Register(op)
@@ -40,22 +43,29 @@ func (e *Engine) Inject(ops ...*HTTPOperation) {
 
 // Prime the engine by setting up default endpoints
 func (e *Engine) Prime() {
-	e.Log.Debug("Priming the engine...")
+	e.Log.Debug("Priming the engine")
+
+	// Add documentation endpoints
+	e.Http.GET("/openapi", e.Docs.SpecHandler)
+	e.Http.GET("/docs", e.Docs.ScalarHandler)
+
+	// Register default endpoints
 	e.Inject(
-		// Register the authentication endpoints
+		// Register the authentication endpoints w/ documentation
 		&HTTPOperation{
-			Name:        "AuthLogin",
-			Summary:     "User Login",
+			Name:        "User Login",
 			Description: "Endpoint for user login. Redirects to the authentication provider.",
 			Method:      "GET",
 			Path:        "/auth/login",
 			Tag:         "Auth",
 			Handler:     e.Auth.LoginHandler,
-			Auth:        false,
+			Response: &HTTPResponse{
+				Status: http.StatusTemporaryRedirect,
+			},
+			Auth: true,
 		},
 		&HTTPOperation{
-			Name:        "AuthCallback",
-			Summary:     "Callback",
+			Name:        "Callback",
 			Description: "Callback endpoint for the authentication provider. Handles the response after user login.",
 			Method:      "POST",
 			Path:        "/auth/callback",
@@ -64,8 +74,7 @@ func (e *Engine) Prime() {
 			Auth:        false,
 		},
 		&HTTPOperation{
-			Name:        "AuthLogout",
-			Summary:     "User Logout",
+			Name:        "User Logout",
 			Description: "Endpoint for user logout. Clears the session and redirects to the home page.",
 			Method:      "GET",
 			Path:        "/auth/logout",
@@ -74,10 +83,9 @@ func (e *Engine) Prime() {
 			Auth:        false,
 		},
 
-		// Register the health check endpoint
+		// Register the health check endpoint w/ documentation
 		&HTTPOperation{
-			Name:        "HealthCheck",
-			Summary:     "Health Check",
+			Name:        "Health Check",
 			Description: "Endpoint to check the health of the application. Returns a 200 OK status if the application is running.",
 			Method:      "GET",
 			Path:        "/health",
@@ -85,33 +93,11 @@ func (e *Engine) Prime() {
 			Handler:     e.Health.HealthCheckHandler,
 			Auth:        false,
 		},
-
-		// Register the API documentation endpoints
-		&HTTPOperation{
-			Name:        "OpenAPISpec",
-			Summary:     "OpenAPI Specification",
-			Description: "Endpoint to retrieve the OpenAPI specification for the API. Returns a YAML representation of the API documentation.",
-			Method:      "GET",
-			Path:        "/openapi",
-			Tag:         "Docs",
-			Handler:     e.Docs.SpecHandler,
-			Auth:        false,
-		},
-		&HTTPOperation{
-			Name:        "OpenAPIDocs",
-			Summary:     "Scalar",
-			Description: "Endpoint to serve the documentation site. Returns the HTML page with the API documentation.",
-			Method:      "GET",
-			Path:        "/docs",
-			Tag:         "Docs",
-			Handler:     e.Docs.ScalarHandler,
-			Auth:        false,
-		},
 	)
 }
 
 // Start the engine by running an HTTP server
 func (e *Engine) Start() {
-	e.Log.Debug("Starting the engine...")
+	e.Log.Debug("Starting the engine")
 	e.Http.Serve()
 }
