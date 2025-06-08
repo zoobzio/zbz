@@ -11,7 +11,7 @@ type HTTP interface {
 	PUT(path string, handlers ...gin.HandlerFunc) gin.IRoutes
 	DELETE(path string, handlers ...gin.HandlerFunc) gin.IRoutes
 
-	Register(operation *HTTPOperation) gin.IRoutes
+	AddRoute(operation *HTTPOperation) gin.IRoutes
 	Serve() error
 }
 
@@ -62,7 +62,7 @@ func NewHTTP(l Logger, c Config, a Auth) HTTP {
 }
 
 // Register an HTTP operation with the Gin router
-func (h *ZbzHTTP) Register(operation *HTTPOperation) gin.IRoutes {
+func (h *ZbzHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
 	h.log.Debugf("Registering a %s operation at %s", operation.Method, operation.Path)
 
 	var route gin.IRoutes
@@ -78,10 +78,6 @@ func (h *ZbzHTTP) Register(operation *HTTPOperation) gin.IRoutes {
 	default:
 		h.log.Errorf("Unsupported HTTP method: %s", operation.Method)
 		return nil
-	}
-
-	if operation.Auth {
-		route.Use(h.auth.TokenMiddleware)
 	}
 
 	return route

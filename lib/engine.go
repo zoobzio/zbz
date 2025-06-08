@@ -22,7 +22,7 @@ func NewEngine() *Engine {
 	d := NewDocs(l, c)
 	h := NewHTTP(l, c, a)
 	hp := NewHealth(l, c)
-	return &Engine{
+	e := &Engine{
 		Auth:     a,
 		Database: db,
 		Docs:     d,
@@ -30,14 +30,25 @@ func NewEngine() *Engine {
 		Http:     h,
 		Log:      l,
 	}
+	e.Prime()
+	return e
 }
 
-// Inject registers HTTP operations with the router & documentation service.
+// Register data models with the engine's documentation service.
+func (e *Engine) Register(models ...*CoreMeta) {
+	e.Log.Debugf("Registering %d models with the engine", len(models))
+	for _, model := range models {
+		e.Docs.AddSchema(model)
+		// TODO consider adding a migration step
+	}
+}
+
+// Register HTTP operations with the router & documentation service.
 func (e *Engine) Inject(ops ...*HTTPOperation) {
 	e.Log.Debugf("Injecting %d operations into the engine", len(ops))
 	for _, op := range ops {
 		e.Docs.AddPath(op)
-		e.Http.Register(op)
+		e.Http.AddRoute(op)
 	}
 }
 
@@ -49,11 +60,14 @@ func (e *Engine) Prime() {
 	e.Http.GET("/openapi", e.Docs.SpecHandler)
 	e.Http.GET("/docs", e.Docs.ScalarHandler)
 
+	// Add auth callback endpoint w/o documentation
+	e.Http.POST("/auth/callback", e.Auth.CallbackHandler)
+
 	// Register default endpoints
 	e.Inject(
 		// Register the authentication endpoints w/ documentation
 		&HTTPOperation{
-			Name:        "User Login",
+			Name:        "Login",
 			Description: "Endpoint for user login. Redirects to the authentication provider.",
 			Method:      "GET",
 			Path:        "/auth/login",
@@ -65,16 +79,7 @@ func (e *Engine) Prime() {
 			Auth: true,
 		},
 		&HTTPOperation{
-			Name:        "Callback",
-			Description: "Callback endpoint for the authentication provider. Handles the response after user login.",
-			Method:      "POST",
-			Path:        "/auth/callback",
-			Tag:         "Auth",
-			Handler:     e.Auth.CallbackHandler,
-			Auth:        false,
-		},
-		&HTTPOperation{
-			Name:        "User Logout",
+			Name:        "Logout",
 			Description: "Endpoint for user logout. Clears the session and redirects to the home page.",
 			Method:      "GET",
 			Path:        "/auth/logout",
