@@ -10,6 +10,7 @@ type OpenAPIInfo struct {
 // OpenAPISchema represents a schema in an OpenAPI specification
 type OpenAPISchema struct {
 	Type        string                    `yaml:"type,omitempty"`
+	Format      string                    `yaml:"format,omitempty"`
 	Description string                    `yaml:"description,omitempty"`
 	Ref         string                    `yaml:"$ref,omitempty"`
 	Required    []string                  `yaml:"required,omitempty"`
@@ -18,19 +19,19 @@ type OpenAPISchema struct {
 }
 
 // OpenAPIResponseApplicationJSON represents the application/json response in an OpenAPI specification
-type OpenAPIResponseApplicationJSON struct {
+type OpenAPIApplicationJSON struct {
 	Schema *OpenAPISchema `yaml:"schema,omitempty"`
 }
 
 // OpenAPIResponseContentItem represents a single content item in an OpenAPI responses
-type OpenAPIResponseContent struct {
-	ApplicationJSON *OpenAPIResponseApplicationJSON `yaml:"application/json,omitempty"`
+type OpenAPIContent struct {
+	ApplicationJSON *OpenAPIApplicationJSON `yaml:"application/json,omitempty"`
 }
 
 // OpenAPIResponse represents a response in an OpenAPI specification
 type OpenAPIResponse struct {
-	Description string                  `yaml:"description"`
-	Content     *OpenAPIResponseContent `yaml:"content,omitempty"`
+	Description string          `yaml:"description"`
+	Content     *OpenAPIContent `yaml:"content,omitempty"`
 }
 
 // OpenAPISecurityScheme represents a security scheme in an OpenAPI specification
@@ -48,10 +49,23 @@ type OpenAPIParameter struct {
 	Schema      *OpenAPISchema `yaml:"schema,omitempty"`
 }
 
+type OpenAPIRef struct {
+	Ref string `yaml:"$ref"`
+}
+
 // OpenAPIComponents holds the components of an OpenAPI specification, including security schemes and schemas
 type OpenAPIComponents struct {
+	Parameters      map[string]*OpenAPIParameter      `yaml:"parameters"`
+	RequestBodies   map[string]*OpenAPISchema         `yaml:"requestBodies"`
 	SecuritySchemes map[string]*OpenAPISecurityScheme `yaml:"securitySchemes"`
 	Schemas         map[string]*OpenAPISchema         `yaml:"schemas"`
+}
+
+// OpenAPIRequestBody represents a request body in an OpenAPI specification
+type OpenAPIRequestBody struct {
+	Description string          `yaml:"description,omitempty"`
+	Required    bool            `yaml:"required,omitempty"`
+	Content     *OpenAPIContent `yaml:"content,omitempty"`
 }
 
 // OpenAPIPath represents a single path in an OpenAPI specification, including its operations and parameters
@@ -59,9 +73,10 @@ type OpenAPIPath struct {
 	Summary     string                   `yaml:"summary,omitempty"`
 	Description string                   `yaml:"description,omitempty"`
 	OperationId string                   `yaml:"operationId,omitempty"`
-	Parameters  []*OpenAPIParameter      `yaml:"parameters,omitempty"`
+	Parameters  []*OpenAPIRef            `yaml:"parameters,omitempty"`
 	Tags        []string                 `yaml:"tags,omitempty"`
 	Responses   map[int]*OpenAPIResponse `yaml:"responses,omitempty"`
+	RequestBody *OpenAPIRequestBody      `yaml:"requestBody,omitempty"`
 	Security    []map[string][]string    `yaml:"security,omitempty"`
 }
 

@@ -1,7 +1,9 @@
 package models
 
+import zbz "zbz/lib"
+
 type Field struct {
-	Base
-	Entity
-	Type string `json:"type" validate:"oneof=string int float bool date time"`
+	zbz.Model
+	Name string `json:"name" validate:"required" desc:"Field name" ex:"username"`
+	Type string `json:"type" validate:"oneof=string int float bool date time" desc:"Field type" ex:"string"`
 }

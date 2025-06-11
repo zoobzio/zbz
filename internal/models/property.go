@@ -2,10 +2,11 @@ package models
 
 import (
 	"encoding/json"
+	zbz "zbz/lib"
 )
 
 type Property struct {
-	Base
+	zbz.Model
 	FieldID     string  `json:"-"`
 	Field       Field   `json:"field"`
 	StringValue string  `json:"-"`

@@ -4,6 +4,7 @@ go 1.23.1
 
 require (
 	github.com/coreos/go-oidc/v3 v3.14.1
+	github.com/docker/distribution v2.8.3+incompatible
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-playground/validator/v10 v10.26.0

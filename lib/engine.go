@@ -1,6 +1,10 @@
 package zbz
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
 
 // Engine is the main application engine that holds the router, database connection, and authenticator.
 type Engine struct {
@@ -35,37 +39,69 @@ func NewEngine() *Engine {
 }
 
 // Register data models with the engine's documentation service.
-func (e *Engine) Register(models ...*CoreMeta) {
-	e.Log.Debugf("Registering %d models with the engine", len(models))
+func (e *Engine) Register(models ...*Meta) {
+	e.Log.Debugf("Registering %d models", len(models))
 	for _, model := range models {
 		e.Docs.AddSchema(model)
 		// TODO consider adding a migration step
 	}
 }
 
-// Register HTTP operations with the router & documentation service.
-func (e *Engine) Inject(ops ...*HTTPOperation) {
-	e.Log.Debugf("Injecting %d operations into the engine", len(ops))
+// Attach HTTP operations to the router & documentation service.
+func (e *Engine) Attach(ops ...*HTTPOperation) {
+	e.Log.Debugf("Attaching %d HTTP operations", len(ops))
 	for _, op := range ops {
 		e.Docs.AddPath(op)
 		e.Http.AddRoute(op)
 	}
 }
 
-// Prime the engine by setting up default endpoints
+// Inject a core resource to the engine, creating default CRUD endpoints & documentation.
+func (e *Engine) Inject(cores ...Core) {
+	e.Log.Debugf("Injecting %d cores", len(cores))
+	for _, core := range cores {
+		meta := core.Meta()
+		e.Register(meta)
+		e.Attach(
+			core.Operations()...,
+		)
+	}
+}
+
+// Prime the engine by setting up middleware & default endpoints
 func (e *Engine) Prime() {
 	e.Log.Debug("Priming the engine")
+
+	// Bind services to the HTTP router
+	e.Http.Use(func(c *gin.Context) {
+		c.Set("db", e.Database)
+		c.Set("log", e.Log)
+		c.Next()
+	})
+
+	// Set up common inputs
+	e.Docs.AddParameter(&OpenAPIParameter{
+		Name:        "id",
+		In:          "path",
+		Description: "A unique identifier for a given resource.",
+		Required:    true,
+		Schema: &OpenAPISchema{
+			Type:    "string",
+			Format:  "uuid",
+			Example: "123e4567-e89b-12d3-a456-426614174000",
+		},
+	})
 
 	// Add documentation endpoints
 	e.Http.GET("/openapi", e.Docs.SpecHandler)
 	e.Http.GET("/docs", e.Docs.ScalarHandler)
 
-	// Add auth callback endpoint w/o documentation
+	// Add auth endpoints w/o documentation
 	e.Http.POST("/auth/callback", e.Auth.CallbackHandler)
 
-	// Register default endpoints
-	e.Inject(
-		// Register the authentication endpoints w/ documentation
+	// Attach default endpoints
+	e.Attach(
+		// Attach the authentication endpoints w/ documentation
 		&HTTPOperation{
 			Name:        "Login",
 			Description: "Endpoint for user login. Redirects to the authentication provider.",
@@ -76,7 +112,7 @@ func (e *Engine) Prime() {
 			Response: &HTTPResponse{
 				Status: http.StatusTemporaryRedirect,
 			},
-			Auth: true,
+			Auth: false,
 		},
 		&HTTPOperation{
 			Name:        "Logout",
@@ -88,7 +124,7 @@ func (e *Engine) Prime() {
 			Auth:        false,
 		},
 
-		// Register the health check endpoint w/ documentation
+		// Attach the health check endpoint w/ documentation
 		&HTTPOperation{
 			Name:        "Health Check",
 			Description: "Endpoint to check the health of the application. Returns a 200 OK status if the application is running.",

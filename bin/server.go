@@ -3,70 +3,25 @@ package main
 import (
 	"zbz/internal/models"
 	"zbz/lib"
-
-	"net/http"
-	"time"
 )
 
 func main() {
 	e := zbz.NewEngine()
 
-	zbz.NewCore(
-		e,
-		&zbz.CoreOperation{
-			Model: &zbz.CoreModel{
-				Name:        "User",
-				Description: "A user in the system.",
-			},
-			Create: &zbz.HTTPOperation{
-				Name:        "Create User",
-				Description: "Endpoint to create a new user.",
-				Method:      "POST",
-				Path:        "/v1/users",
-				Tag:         "User",
-				Response: &zbz.HTTPResponse{
-					Status: http.StatusCreated,
-					Ref:    "User",
-					Errors: []int{
-						http.StatusBadRequest,
-						http.StatusUnauthorized,
-						http.StatusForbidden,
-					},
-				},
-				Auth: true,
-			},
-			Read: &zbz.HTTPOperation{
-				Name:        "Get User",
-				Description: "Endpoint to get a user by ID.",
-				Method:      "GET",
-				Path:        "/v1/users/:id",
-				Tag:         "User",
-				Auth:        true,
-			},
-			Update: &zbz.HTTPOperation{
-				Name:        "Update User",
-				Description: "Endpoint to update a user by ID.",
-				Method:      "PUT",
-				Path:        "/v1/users/:id",
-				Tag:         "User",
-				Auth:        true,
-			},
-			Delete: &zbz.HTTPOperation{
-				Name:        "Delete User",
-				Description: "Endpoint to delete a user by ID.",
-				Method:      "DELETE",
-				Path:        "/v1/users/:id",
-				Tag:         "User",
-				Auth:        true,
-			},
-		},
-		&models.User{
-			ID:        "123e4567-e89b-12d3-a456-426614174000",
-			Name:      "John Doe",
-			Email:     "john.doe@example.com",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	user := zbz.NewCore[models.User]("A model representing a `User` in the system.")
+	contact := zbz.NewCore[models.Contact]("A model representing a `Contact` in the system.")
+	company := zbz.NewCore[models.Company]("A model representing a `Company` in the system.")
+	form := zbz.NewCore[models.Form]("A model representing a `Form` in the system.")
+	property := zbz.NewCore[models.Property]("A model representing a `Property` in the system.")
+	field := zbz.NewCore[models.Field]("A model representing a `Field` in the system.")
+
+	e.Inject(
+		user,
+		contact,
+		company,
+		form,
+		property,
+		field,
 	)
 
 	e.Start()
