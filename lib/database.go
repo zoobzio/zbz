@@ -1,61 +1,134 @@
 package zbz
 
 import (
-	"github.com/go-playground/validator/v10"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 )
 
 // Database provides methods to interact with the database.
 type Database interface {
-	Create(value any) *gorm.DB
-	First(dest any, conds ...any) *gorm.DB
-	Model(value any) *gorm.DB
-	Delete(value any, conds ...any) *gorm.DB
-
-	IsValidID(v any) error
-	IsValid(v any) error
+	Prepare(contract *MacroContract) error
+	Execute(contract *MacroContract, params map[string]any) (*sqlx.Rows, error)
+	Dismiss(contract *MacroContract) error
 }
 
-// ZbzDatabase holds the configuration for the database connection.
-type ZbzDatabase struct {
-	*gorm.DB
-	*validator.Validate
-	config Config
-	log    Logger
+// zDatabase holds the configuration for the database connection.
+type zDatabase struct {
+	*sqlx.DB
+
+	macros     map[string]Macro
+	statements map[string]*sqlx.NamedStmt
 }
 
 // NewDatabase initializes a new Database instance with the provided configuration.
-func NewDatabase(l Logger, c Config) Database {
-	dsn := c.DSN()
+func NewDatabase() Database {
+	Log.Debug("Initializing database connection")
 
-	cx, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	dsn := config.DSN()
+
+	cx, err := sqlx.Connect("postgres", dsn)
 	if err != nil {
-		l.Fatal("Failed to connect to database:", err)
+		Log.Fatal("Failed to connect to database:", err)
 	}
 
-	v := validator.New()
-
-	return &ZbzDatabase{
-		DB:       cx,
-		Validate: v,
-		config:   c,
-		log:      l,
+	db := &zDatabase{
+		DB:         cx,
+		macros:     make(map[string]Macro),
+		statements: make(map[string]*sqlx.NamedStmt),
 	}
+
+	db.LoadTemplates("lib/macros")
+
+	return db
 }
 
-// IsValidID checks if the provided value is a valid UUID.
-func (d *ZbzDatabase) IsValidID(v any) error {
-	if err := d.Var(v, "uuid"); err != nil {
+// LoadTemplates loads SQLx macros from the specified directory into the database instance.
+func (d *zDatabase) LoadTemplates(dir string) {
+	Log.Infof("Loading query macros from %s", dir)
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		Log.Fatalf("Failed to read query macros directory: %v", err)
+	}
+
+	macros := make(map[string]Macro)
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		filename := file.Name()
+		ext := filepath.Ext(filename)
+		key := strings.TrimSuffix(filename, ext)
+		fullPath := filepath.Join(dir, filename)
+
+		if ext != ".sqlx" {
+			continue
+		}
+
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			Log.Fatalf("Failed to read query template file %s: %v", fullPath, err)
+		}
+
+		macros[key] = NewMacro(key, string(content))
+	}
+
+	maps.Copy(d.macros, macros)
+}
+
+// Prepare a SQL query by its name and optional embedded parameters.
+func (d *zDatabase) Prepare(contract *MacroContract) error {
+	query, ok := d.macros[contract.Macro]
+	if !ok {
+		return fmt.Errorf("query %s not found", contract.Macro)
+	}
+
+	q, err := query.Interpolate(contract.Embed)
+	if err != nil {
 		return err
 	}
+
+	stmt, err := d.PrepareNamed(q)
+	if err != nil {
+		return err
+	}
+
+	d.statements[contract.Name] = stmt
+
 	return nil
 }
 
-// IsValid checks if the provided value is valid according to the struct tags.
-func (d *ZbzDatabase) IsValid(v any) error {
-	if err := d.Struct(v); err != nil {
+// Execute a prepared SQL statement with the provided parameters.
+func (d *zDatabase) Execute(contract *MacroContract, params map[string]any) (*sqlx.Rows, error) {
+	stmt, ok := d.statements[contract.Name]
+	if !ok {
+		return nil, fmt.Errorf("statement %s not found", contract.Name)
+	}
+
+	rows, err := stmt.Queryx(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute statement %s: %w", contract.Name, err)
+	}
+
+	return rows, nil
+}
+
+// Dismiss a prepared SQL statement by its name.
+func (d *zDatabase) Dismiss(contract *MacroContract) error {
+	stmt, ok := d.statements[contract.Name]
+	if !ok {
+		return fmt.Errorf("statement %s not found", contract.Name)
+	}
+
+	if err := stmt.Close(); err != nil {
 		return err
 	}
+
 	return nil
 }

@@ -3,6 +3,7 @@ package zbz
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,9 @@ import (
 type Core interface {
 	Description() string
 	Meta() *Meta
+
+	Table() *MacroContract
+	Contracts() []*MacroContract
 	Operations() []*HTTPOperation
 
 	CreateHandler(ctx *gin.Context)
@@ -20,29 +24,82 @@ type Core interface {
 	DeleteHandler(ctx *gin.Context)
 }
 
-// ZbzCore is a generic implementation for core CRUD operations.
-type ZbzCore[T BaseModel] struct {
+// zCore is a generic implementation for core CRUD operations.
+type zCore[T BaseModel] struct {
 	description string
 }
 
-// NewCore creates a new instance of ZbzCore with the provided logger, config, and database.
+// NewCore creates a new instance of zCore with the provided logger, config, and database.
 func NewCore[T BaseModel](desc string) Core {
-	return &ZbzCore[T]{
+	return &zCore[T]{
 		description: desc,
 	}
 }
 
 // Description returns the description of the core resource.
-func (c *ZbzCore[T]) Description() string {
+func (c *zCore[T]) Description() string {
 	return c.description
 }
 
-func (c *ZbzCore[T]) Meta() *Meta {
-	return ExtractMeta[T]()
+// Meta extracts the metadata for the core resource, which includes its name and other properties.
+func (c *zCore[T]) Meta() *Meta {
+	return extractMeta[T]()
+}
+
+// Table returns the SQL statement to create the table for the core resource.
+func (c *zCore[T]) Table() *MacroContract {
+	meta := c.Meta()
+	defs := []string{}
+	for _, field := range meta.Fields {
+		if field.Type == "zbz.Model" || field.SourceName == "-" {
+			continue
+		}
+		def := fmt.Sprintf("%s %s", field.SourceName, field.SourceType)
+		if field.SourceName == "id" {
+			def += " PRIMARY KEY"
+		}
+		if field.Required {
+			def += " NOT NULL"
+		}
+		defs = append(defs, def)
+	}
+	return &MacroContract{
+		Name:  fmt.Sprintf("Create%sTable", meta.Name),
+		Macro: "create_table",
+		Embed: map[string]string{
+			"table":   strings.ToLower(meta.Name),
+			"columns": strings.Join(defs, ", "),
+		},
+	}
+}
+
+// MacroContracts returns the SQL statements associated with the core resource.
+func (c *zCore[T]) Contracts() []*MacroContract {
+	meta := c.Meta()
+
+	cols := meta.Columns
+	vals := []string{}
+	for _, col := range meta.Fields {
+		if slices.Contains(cols, col.SourceName) {
+			vals = append(vals, fmt.Sprintf(":%s", col.Name))
+		}
+	}
+
+	return []*MacroContract{
+		{
+			Name:  fmt.Sprintf("Create%s", meta.Name),
+			Macro: "create_record",
+			Embed: map[string]string{
+				"table":   strings.ToLower(meta.Name),
+				"columns": strings.Join(cols, ", "),
+				"values":  strings.Join(vals, ", "),
+			},
+		},
+	}
 }
 
 // Operations returns the HTTP operations for creating, reading, updating, and deleting the core resource.
-func (c *ZbzCore[T]) Operations() []*HTTPOperation {
+func (c *zCore[T]) Operations() []*HTTPOperation {
 	meta := c.Meta()
 	return []*HTTPOperation{
 		{
@@ -115,117 +172,18 @@ func (c *ZbzCore[T]) Operations() []*HTTPOperation {
 	}
 }
 
-// Create a record
-func (c *ZbzCore[T]) CreateHandler(ctx *gin.Context) {
-	log := ctx.MustGet("log").(Logger)
-	db := ctx.MustGet("db").(Database)
-
-	var record T
-	if err := ctx.ShouldBindJSON(&record); err != nil {
-		log.Errorf("Failed to bind JSON: %v", err)
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-
-	// TODO extract known editable fields to avoid side-effects
-
-	if err := db.Create(&record).Error; err != nil {
-		log.Errorf("Failed to create record: %v", err)
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	err := db.IsValid(record)
-	if err != nil {
-		log.Errorf("Validation failed: %v", err)
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-
-	ctx.JSON(http.StatusCreated, record)
+// CreateHandler handles the creation of a new record.
+func (c *zCore[T]) CreateHandler(ctx *gin.Context) {
 }
 
-// Read a record by ID
-func (c *ZbzCore[T]) ReadHandler(ctx *gin.Context) {
-	db := ctx.MustGet("db").(Database)
-	if db == nil {
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	recordID := ctx.Param("id")
-	err := db.IsValidID(recordID)
-	if err != nil {
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-
-	var record T
-	if err := db.First(&record, recordID).Error; err != nil {
-		ctx.Status(http.StatusNotFound)
-		return
-	}
-
-	err = db.IsValid(record)
-	if err != nil {
-		ctx.Status(http.StatusUnprocessableEntity)
-		return
-	}
-
-	ctx.JSON(http.StatusOK, record)
+// ReadHandler retrieves a record by ID.
+func (c *zCore[T]) ReadHandler(ctx *gin.Context) {
 }
 
-// Update a record by ID
-func (c *ZbzCore[T]) UpdateHandler(ctx *gin.Context) {
-	db := ctx.MustGet("db").(Database)
-	if db == nil {
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	recordID := ctx.Param("id")
-
-	var record T
-	if err := ctx.ShouldBindJSON(&record); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-
-	err := db.IsValid(record)
-	if err != nil {
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-
-	var model T
-	if err := db.Model(&model).Where("id = ?", recordID).Updates(record).Error; err != nil {
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	ctx.JSON(http.StatusOK, record)
+// UpdateHandler updates a record by ID.
+func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 }
 
-// Delete a record by ID
-func (c *ZbzCore[T]) DeleteHandler(ctx *gin.Context) {
-	db := ctx.MustGet("db").(Database)
-	if db == nil {
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	recordID := ctx.Param("id")
-	err := db.IsValidID(recordID)
-	if err != nil {
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-
-	var record T
-	if err := db.Delete(&record, recordID).Error; err != nil {
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	ctx.Status(http.StatusNoContent)
+// DeleteHandler deletes a record by ID.
+func (c *zCore[T]) DeleteHandler(ctx *gin.Context) {
 }

@@ -2,19 +2,18 @@ package zbz
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"golang.org/x/oauth2"
-
-	"crypto/rand"
-	"encoding/base64"
-	"net/http"
-	"net/url"
-
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/oauth2"
 )
 
 // Auth is an interface that defines methods for user authentication.
@@ -27,21 +26,19 @@ type Auth interface {
 }
 
 // Auth is used to authenticate our users.
-type ZbzAuth struct {
-	config   Config
-	log      Logger
+type zAuth struct {
 	oauth    oauth2.Config
 	provider *oidc.Provider
 }
 
-// NewAuth instantiates the Auth module
-func NewAuth(l Logger, config Config) Auth {
+// NewAuth initializes an OIDC provider and OAuth2 configuration for authentication.
+func NewAuth() Auth {
 	provider, err := oidc.NewProvider(
 		context.Background(),
-		"https://"+config.AuthDomain()+"/",
+		fmt.Sprintf("https://%s/", config.AuthDomain()),
 	)
 	if err != nil {
-		l.Fatal("Failed to create OIDC provider:", err)
+		Log.Fatal("Failed to create OIDC provider:", err)
 	}
 
 	oauth := oauth2.Config{
@@ -52,15 +49,14 @@ func NewAuth(l Logger, config Config) Auth {
 		Scopes:       []string{oidc.ScopeOpenID, "profile"},
 	}
 
-	return &ZbzAuth{
+	return &zAuth{
 		provider: provider,
 		oauth:    oauth,
-		config:   config,
 	}
 }
 
 // VerifyIDToken verifies that an *oauth2.Token is a valid *oidc.IDToken.
-func (a *ZbzAuth) VerifyIDToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
+func (a *zAuth) VerifyIDToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
 		return nil, errors.New("no id_token field in oauth2 token")
@@ -74,7 +70,7 @@ func (a *ZbzAuth) VerifyIDToken(ctx context.Context, token *oauth2.Token) (*oidc
 }
 
 // TokenMiddleware is a middleware that checks if the user is authenticated.
-func (a *ZbzAuth) TokenMiddleware(ctx *gin.Context) {
+func (a *zAuth) TokenMiddleware(ctx *gin.Context) {
 	if sessions.Default(ctx).Get("profile") == nil {
 		ctx.Redirect(http.StatusSeeOther, "/")
 	} else {
@@ -83,7 +79,7 @@ func (a *ZbzAuth) TokenMiddleware(ctx *gin.Context) {
 }
 
 // LoginHandler initiates the OAuth2 authorization code flow by redirecting the user to the Auth0 authorization server
-func (a *ZbzAuth) LoginHandler(ctx *gin.Context) {
+func (a *zAuth) LoginHandler(ctx *gin.Context) {
 	b := make([]byte, 32)
 	_, err := rand.Read(b)
 	if err != nil {
@@ -104,7 +100,7 @@ func (a *ZbzAuth) LoginHandler(ctx *gin.Context) {
 }
 
 // CallbackHandler handles the OAuth2 callback from the Auth0 authorization server
-func (a *ZbzAuth) CallbackHandler(ctx *gin.Context) {
+func (a *zAuth) CallbackHandler(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 	if ctx.Query("state") != session.Get("state") {
 		ctx.String(http.StatusBadRequest, "Invalid state parameter.")
@@ -140,7 +136,7 @@ func (a *ZbzAuth) CallbackHandler(ctx *gin.Context) {
 }
 
 // LogoutHandler handles the logout process by redirecting the user to the Auth0 logout endpoint
-func (a *ZbzAuth) LogoutHandler(ctx *gin.Context) {
+func (a *zAuth) LogoutHandler(ctx *gin.Context) {
 	logoutUrl, err := url.Parse("https://" + os.Getenv("AUTH0_DOMAIN") + "/v2/logout")
 	if err != nil {
 		ctx.String(http.StatusInternalServerError, err.Error())

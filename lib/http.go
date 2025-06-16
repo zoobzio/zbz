@@ -59,36 +59,37 @@ type HTTPOperation struct {
 	Auth        bool
 }
 
-// ZbzHTTP is responsible for setting up the HTTP router
-type ZbzHTTP struct {
+// zHTTP is responsible for setting up the HTTP router
+type zHTTP struct {
 	*gin.Engine
-
-	auth   Auth
-	config Config
-	log    Logger
 }
 
 // NewHTTP creates a new HTTP instance
-func NewHTTP(l Logger, c Config, a Auth) HTTP {
+func NewHTTP() HTTP {
 	gin.SetMode(gin.ReleaseMode) // disable GIN debug logs
-	e := gin.New()
+	engine := gin.New()
 
-	e.Use(gin.Recovery())
-	e.Use(l.Middleware)
+	engine.Use(gin.Recovery())
+	engine.Use(LogMiddleware)
 
-	e.LoadHTMLGlob("lib/templates/*")
-
-	return &ZbzHTTP{
-		Engine: e,
-		auth:   a,
-		config: c,
-		log:    l,
+	http := &zHTTP{
+		Engine: engine,
 	}
+
+	http.LoadTemplates("lib/templates/*")
+
+	return http
+}
+
+// LoadTemplates loads HTML templates from the specified directory
+func (h *zHTTP) LoadTemplates(dir string) {
+	Log.Debugf("Loading templates from %s", dir)
+	h.LoadHTMLGlob(dir)
 }
 
 // Register an HTTP operation with the Gin router
-func (h *ZbzHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
-	h.log.Debugf("[%s] %s", operation.Method, operation.Path)
+func (h *zHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
+	Log.Debugf("[%s] %s", operation.Method, operation.Path)
 
 	path := operation.Path
 	re := regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
@@ -105,7 +106,7 @@ func (h *ZbzHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
 	case "DELETE":
 		route = h.DELETE(path, operation.Handler)
 	default:
-		h.log.Errorf("Unsupported HTTP method: %s", operation.Method)
+		Log.Errorf("Unsupported HTTP method: %s", operation.Method)
 		return nil
 	}
 
@@ -113,7 +114,7 @@ func (h *ZbzHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
 }
 
 // Serve the HTTP router on the configured port
-func (h *ZbzHTTP) Serve() error {
-	h.log.Infof("Starting HTTP server on port %s", h.config.Port())
-	return h.Run(":" + h.config.Port())
+func (h *zHTTP) Serve() error {
+	Log.Infof("Starting HTTP server on port %s", config.Port())
+	return h.Run(":" + config.Port())
 }

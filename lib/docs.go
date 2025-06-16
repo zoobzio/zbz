@@ -22,23 +22,19 @@ type Docs interface {
 }
 
 // Docs represents the documentation structure for an API
-type ZbzDocs struct {
-	config Config
-	log    Logger
-	spec   *OpenAPISpec
+type zDocs struct {
+	spec *OpenAPISpec
 }
 
 // NewDocs creates a new Docs instance
-func NewDocs(l Logger, c Config) Docs {
-	return &ZbzDocs{
-		config: c,
-		log:    l,
+func NewDocs() Docs {
+	return &zDocs{
 		spec: &OpenAPISpec{
 			OpenAPI: "3.0.0",
 			Info: &OpenAPIInfo{
-				Title:       c.Title(),
-				Version:     c.Version(),
-				Description: c.Description(),
+				Title:       config.Title(),
+				Version:     config.Version(),
+				Description: config.Description(),
 			},
 			Components: &OpenAPIComponents{
 				Parameters:    make(map[string]*OpenAPIParameter),
@@ -58,7 +54,7 @@ func NewDocs(l Logger, c Config) Docs {
 }
 
 // AddTag adds a new tag to the OpenAPI specification
-func (d *ZbzDocs) AddTag(name, description string) {
+func (d *zDocs) AddTag(name, description string) {
 	d.spec.Tags = append(d.spec.Tags, map[string]string{
 		"name":        name,
 		"description": description,
@@ -66,7 +62,7 @@ func (d *ZbzDocs) AddTag(name, description string) {
 }
 
 // AddParameter adds a new parameter to the OpenAPI specification
-func (d *ZbzDocs) AddParameter(param *OpenAPIParameter) {
+func (d *zDocs) AddParameter(param *OpenAPIParameter) {
 	if d.spec.Components.Parameters == nil {
 		d.spec.Components.Parameters = make(map[string]*OpenAPIParameter)
 	}
@@ -74,7 +70,7 @@ func (d *ZbzDocs) AddParameter(param *OpenAPIParameter) {
 }
 
 // AddBody adds a new request body to the OpenAPI specification
-func (d *ZbzDocs) AddBody(body *OpenAPISchema) {
+func (d *zDocs) AddBody(body *OpenAPISchema) {
 	if d.spec.Components.RequestBodies == nil {
 		d.spec.Components.RequestBodies = make(map[string]*OpenAPISchema)
 	}
@@ -82,7 +78,7 @@ func (d *ZbzDocs) AddBody(body *OpenAPISchema) {
 }
 
 // AddPath adds a new path to the OpenAPI specification
-func (d *ZbzDocs) AddPath(op *HTTPOperation) {
+func (d *zDocs) AddPath(op *HTTPOperation) {
 	if d.spec.Paths[op.Path] == nil {
 		d.spec.Paths[op.Path] = make(map[string]*OpenAPIPath)
 	}
@@ -166,10 +162,10 @@ func (d *ZbzDocs) AddPath(op *HTTPOperation) {
 }
 
 // AddSchema adds a new schema to the OpenAPI specification
-func (d *ZbzDocs) AddSchema(meta *Meta) {
+func (d *zDocs) AddSchema(meta *Meta) {
 	example, err := json.Marshal(meta.Example)
 	if err != nil {
-		d.log.Fatalf("Failed to marshal example for model %s: %v", meta.Name, err)
+		Log.Fatalf("Failed to marshal example for model %s: %v", meta.Name, err)
 	}
 
 	schema := &OpenAPISchema{
@@ -263,7 +259,7 @@ func (d *ZbzDocs) AddSchema(meta *Meta) {
 }
 
 // SpecHandler generates and returns the OpenAPI specification in YAML format
-func (d *ZbzDocs) SpecHandler(ctx *gin.Context) {
+func (d *zDocs) SpecHandler(ctx *gin.Context) {
 	spec, err := yaml.Marshal(d.spec)
 	if err != nil {
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate OpenAPI spec"})
@@ -272,9 +268,9 @@ func (d *ZbzDocs) SpecHandler(ctx *gin.Context) {
 }
 
 // ScalarHandler renders a documentation site built using Scalar: https://scalar.com/
-func (d *ZbzDocs) ScalarHandler(ctx *gin.Context) {
+func (d *zDocs) ScalarHandler(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "scalar.tmpl", gin.H{
-		"title":   d.config.Title(),
+		"title":   config.Title(),
 		"openapi": "/openapi",
 	})
 }

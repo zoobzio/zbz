@@ -12,6 +12,58 @@ services:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - dev
+
+  metabase:
+    image: metabase/metabase
+    container_name: metabase
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: ${POSTGRES_DB}
+      MB_DB_PORT: ${POSTGRES_PORT}
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      MB_DB_HOST: ${POSTGRES_HOST}
+      MB_SETUP_ADMIN_EMAIL: ${METABASE_ADMIN_EMAIL}
+      MB_SETUP_ADMIN_PASSWORD: ${METABASE_ADMIN_PASSWORD}
+      MB_SETUP_ADMIN_FIRST_NAME: ${METABASE_ADMIN_FIRST_NAME}
+      MB_SETUP_ADMIN_LAST_NAME: ${METABASE_ADMIN_LAST_NAME}
+      MB_SETUP_TOKEN: ${METABASE_SETUP_TOKEN}
+    ports:
+      - "3000:3000"
+    networks:
+      - dev
+    depends_on:
+      - db
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # Jaeger gRPC
+      - "6831:6831/udp" # Jaeger agent
+    networks:
+      - dev
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    command: ["--config=otel.yaml"]
+    volumes:
+      - ./otel.yaml:/etc/otel.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver (optional)
+    networks:
+      - dev
+    depends_on:
+      - jaeger
+
+  grafana:
+    image: grafana/grafana:10.2.4
+    ports:
+      - "3000:3000"
+    networks:
+      - dev
+
   api:
     build:
       context: .
@@ -38,6 +90,11 @@ services:
     ports:
       - "8080:8080"
     command: ["air"]
+    depends_on:
+      - db
+      - prometheus
+      - grafana
+      - jaeger
     networks:
       - dev
 

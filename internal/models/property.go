@@ -7,14 +7,14 @@ import (
 
 type Property struct {
 	zbz.Model
-	FieldID     string  `json:"-"`
-	Field       Field   `json:"field"`
-	StringValue string  `json:"-"`
-	IntValue    int     `json:"-"`
-	FloatValue  float64 `json:"-"`
-	BoolValue   bool    `json:"-"`
-	DateValue   string  `json:"-"`
-	TimeValue   string  `json:"-"`
+	FieldID     string  `db:"field_id" json:"-"`
+	Field       Field   `db:"-" json:"field"`
+	StringValue string  `db:"string_value" json:"-"`
+	IntValue    int     `db:"int_value" json:"-"`
+	FloatValue  float64 `db:"float_value" json:"-"`
+	BoolValue   bool    `db:"bool_value" json:"-"`
+	DateValue   string  `db:"date_value" json:"-"`
+	TimeValue   string  `db:"time_value" json:"-"`
 }
 
 func (p Property) Value() any {

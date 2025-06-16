@@ -17,17 +17,31 @@ type Logger interface {
 	Warnf(template string, args ...any)
 	Errorf(template string, args ...any)
 	Fatalf(template string, args ...any)
-
-	Middleware(c *gin.Context)
 }
 
-// ZapLogger wraps a zap.SugaredLogger and implements the Logger interface.
-type ZapLogger struct {
+// zLogger wraps a zap.SugaredLogger and implements the Logger interface.
+type zLogger struct {
 	*zap.SugaredLogger
 }
 
-// NewLogger creates a new ZapLogger with the given zap.SugaredLogger.
-func NewLogger() Logger {
+// Log is a global logger instance that can be used throughout the application.
+var Log Logger
+
+// Middleware logs incoming requests and their responses using the gin context.
+func LogMiddleware(c *gin.Context) {
+	Log.Debugf("Request: %s %s", c.Request.Method, c.Request.URL.Path)
+	c.Next()
+	if len(c.Errors) > 0 {
+		for _, err := range c.Errors {
+			Log.Errorf("Error: %v", err)
+		}
+	} else {
+		Log.Infof("Response: %d %s", c.Writer.Status(), c.Request.URL.Path)
+	}
+}
+
+// init initializes the global logger with a zap configuration.
+func init() {
 	c := zap.Config{
 		Encoding:         "console",
 		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
@@ -43,18 +57,5 @@ func NewLogger() Logger {
 
 	defer zp.Sync() // flushes buffer, if any
 
-	return &ZapLogger{zp.Sugar()}
-}
-
-// Middleware logs incoming requests and their responses using the gin context.
-func (l *ZapLogger) Middleware(c *gin.Context) {
-	l.Debugf("Request: %s %s", c.Request.Method, c.Request.URL.Path)
-	c.Next()
-	if len(c.Errors) > 0 {
-		for _, err := range c.Errors {
-			l.Errorf("Error: %v", err)
-		}
-	} else {
-		l.Infof("Response: %d %s", c.Writer.Status(), c.Request.URL.Path)
-	}
+	Log = &zLogger{zp.Sugar()}
 }
