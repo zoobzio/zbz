@@ -4,6 +4,8 @@ import (
 	"regexp"
 
 	"github.com/gin-gonic/gin"
+	p "github.com/zsais/go-gin-prometheus"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 // HTTP is an interface for the HTTP server
@@ -27,18 +29,21 @@ type HTTPResponse struct {
 	Errors []int
 }
 
+// HTTPPathParameter represents a path parameter in an HTTP request
 type HTTPPathParameter struct {
 	Name        string
 	Description string
 	Required    bool
 }
 
+// HTTPHeaderParameter represents a header parameter in an HTTP request
 type HTTPQueryParameter struct {
 	Name        string
 	Description string
 	Required    bool
 }
 
+// HTTPQueryParameter represents a query parameter in an HTTP request
 type HTTPRequestBody struct {
 	Description string
 	Required    bool
@@ -69,8 +74,12 @@ func NewHTTP() HTTP {
 	gin.SetMode(gin.ReleaseMode) // disable GIN debug logs
 	engine := gin.New()
 
+	prometheus := p.NewPrometheus("gin")
+	prometheus.Use(engine)
+
 	engine.Use(gin.Recovery())
 	engine.Use(LogMiddleware)
+	engine.Use(otelgin.Middleware("zbz"))
 
 	http := &zHTTP{
 		Engine: engine,

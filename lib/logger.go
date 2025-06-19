@@ -1,8 +1,12 @@
 package zbz
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Logger is an interface exposing only the basic logging functions you need.
@@ -40,22 +44,33 @@ func LogMiddleware(c *gin.Context) {
 	}
 }
 
-// init initializes the global logger with a zap configuration.
+// InitLogger initializes the global logger with zap, supporting file and console outputs.
+func InitLogger(devMode bool, logFile string) {
+	var cores []zapcore.Core
+
+	// Lumberjack logger for file output
+	fileSyncer := zapcore.AddSync(&lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    100, // megabytes
+		MaxBackups: 3,
+		MaxAge:     30, // days
+		Compress:   true,
+	})
+	fileEncoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+	cores = append(cores, zapcore.NewCore(fileEncoder, fileSyncer, zap.DebugLevel))
+
+	if devMode {
+		// Console output (stdout/stderr)
+		consoleEncoder := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
+		consoleSyncer := zapcore.AddSync(os.Stdout)
+		cores = append(cores, zapcore.NewCore(consoleEncoder, consoleSyncer, zap.DebugLevel))
+	}
+
+	core := zapcore.NewTee(cores...)
+	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zap.ErrorLevel))
+	Log = &zLogger{logger.Sugar()}
+}
+
 func init() {
-	c := zap.Config{
-		Encoding:         "console",
-		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
-		OutputPaths:      []string{"stdout"},
-		ErrorOutputPaths: []string{"stderr"},
-		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
-	}
-
-	zp, err := c.Build()
-	if err != nil {
-		panic("failed to create zap logger: " + err.Error())
-	}
-
-	defer zp.Sync() // flushes buffer, if any
-
-	Log = &zLogger{zp.Sugar()}
+	InitLogger(true, "logs/app.log")
 }

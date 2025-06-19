@@ -1,11 +1,20 @@
 package main
 
 import (
+	"context"
+
 	"zbz/internal/models"
 	"zbz/lib"
 )
 
 func main() {
+	ctx := context.Background()
+
+	_, _, err := zbz.InitTelemetry(ctx, "zbz")
+	if err != nil {
+		zbz.Log.Fatalf("failed to initialize tracer: %v", err)
+	}
+
 	e := zbz.NewEngine()
 
 	user := zbz.NewCore[models.User]("A model representing a `User` in the system.")

@@ -20,6 +20,8 @@ type Config interface {
 	AuthClientSecret() string
 	AuthCallback() string
 
+	OtelEndpoint() string
+
 	DSN() string
 }
 
@@ -35,6 +37,8 @@ type zConfig struct {
 	authClientID     string `validate:"required"`
 	authClientSecret string `validate:"required"`
 	authCallback     string `validate:"required"`
+
+	otelEndpoint string `validate:"required"`
 
 	pgHost     string `validate:"required"`
 	pgPort     string `validate:"required"`
@@ -89,6 +93,14 @@ func (c *zConfig) AuthClientSecret() string {
 // AuthCallback returns the Auth0 callback URL for authentication.
 func (c *zConfig) AuthCallback() string {
 	return c.authCallback
+}
+
+// OtelEndpoint returns the OpenTelemetry endpoint for tracing.
+func (c *zConfig) OtelEndpoint() string {
+	if c.otelEndpoint == "" {
+		c.otelEndpoint = "otel:4317" // Default endpoint if not set
+	}
+	return c.otelEndpoint
 }
 
 // DSN returns the Data Source Name for connecting to the PostgreSQL database.

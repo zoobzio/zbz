@@ -28,39 +28,81 @@ services:
       MB_SETUP_ADMIN_FIRST_NAME: ${METABASE_ADMIN_FIRST_NAME}
       MB_SETUP_ADMIN_LAST_NAME: ${METABASE_ADMIN_LAST_NAME}
       MB_SETUP_TOKEN: ${METABASE_SETUP_TOKEN}
+      MB_JETTY_PORT: 2222
     ports:
-      - "3000:3000"
+      - "2222:2222"
     networks:
       - dev
     depends_on:
       - db
 
-  jaeger:
-    image: jaegertracing/all-in-one:1.58
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+      - tempo-data:/var/tempo
     ports:
-      - "16686:16686" # Jaeger UI
-      - "14250:14250" # Jaeger gRPC
-      - "6831:6831/udp" # Jaeger agent
+      - "3200:3200" # Tempo HTTP API
     networks:
       - dev
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.91.0
-    command: ["--config=otel.yaml"]
+  otel:
+    image: otel/opentelemetry-collector-contrib:0.128.0
+    container_name: otel
+    command: ["--config=/etc/otel.yaml"]
     volumes:
       - ./otel.yaml:/etc/otel.yaml
     ports:
-      - "4317:4317" # OTLP gRPC receiver
-      - "4318:4318" # OTLP HTTP receiver (optional)
+      - "55679:55679" # OTLP live diagnostics
+      - "13133:13133" # OTLP Health check
+      - "1777:1777" # OTL performance profiling
+    depends_on:
+      - tempo
+      - loki
     networks:
       - dev
-    depends_on:
-      - jaeger
 
   grafana:
     image: grafana/grafana:10.2.4
+    container_name: grafana
+    environment:
+      GF_SERVER_HTTP_PORT: 3333
     ports:
-      - "3000:3000"
+      - "3333:3333"
+    networks:
+      - dev
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    networks:
+      - dev
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    volumes:
+      - ./promtail.yaml:/etc/promtail/promtail.yaml
+      - logs:/logs
+    command: -config.file=/etc/promtail/promtail.yaml
+    depends_on:
+      - api
+      - loki
+    networks:
+      - dev
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
     networks:
       - dev
 
@@ -72,6 +114,7 @@ services:
     volumes:
       - .:/app
       - api-data:/tmp
+      - logs:/app/logs
     environment:
       API_HOST: ${API_HOST}
       API_PORT: ${API_PORT}
@@ -89,18 +132,16 @@ services:
       POSTGRES_PORT: ${POSTGRES_PORT}
     ports:
       - "8080:8080"
-    command: ["air"]
     depends_on:
       - db
-      - prometheus
-      - grafana
-      - jaeger
     networks:
       - dev
 
 volumes:
   postgres-data:
+  tempo-data:
   api-data:
+  logs:
 
 networks:
   dev:
