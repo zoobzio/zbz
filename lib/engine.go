@@ -10,7 +10,7 @@ import (
 // Engine is the main application engine that provides methods to register models, attach HTTP operations, and inject core resources.
 type Engine interface {
 	Register(models ...*Meta)
-	Attach(ops ...*HTTPOperation)
+	Attach(ops ...*Operation)
 	Inject(cores ...Core)
 	Prime()
 	Start()
@@ -40,15 +40,15 @@ func NewEngine() Engine {
 
 // Register data models with the engine's documentation service.
 func (e *zEngine) Register(models ...*Meta) {
-	Log.Debugf("Registering %d models", len(models))
+	Log.Debugw("Registering database models", "models_count", len(models))
 	for _, model := range models {
 		e.docs.AddSchema(model)
 	}
 }
 
 // Attach HTTP operations to the router & documentation service.
-func (e *zEngine) Attach(ops ...*HTTPOperation) {
-	Log.Debugf("Attaching %d HTTP operations", len(ops))
+func (e *zEngine) Attach(ops ...*Operation) {
+	Log.Debugw("Attaching HTTP operations", "operations_count", len(ops))
 	for _, op := range ops {
 		e.docs.AddPath(op)
 		e.http.AddRoute(op)
@@ -57,39 +57,40 @@ func (e *zEngine) Attach(ops ...*HTTPOperation) {
 
 // Compose a database query and prepare it for execution.
 func (e *zEngine) Compose(contracts ...*MacroContract) {
-	Log.Debugf("Composing %d query statements", len(contracts))
+	Log.Debugw("Composing query statements", "contracts_count", len(contracts))
 	for _, contract := range contracts {
-		Log.Debugf("Composing statement: %s", contract.Name)
 		err := e.database.Prepare(contract)
 		if err != nil {
-			Log.Fatalf("Failed to prepare statement %s - %v", contract.Name, err)
+			Log.Fatalw("Failed to prepare statement", "contract", contract, "error", err)
 		}
-
 	}
 }
 
 // Execute a database query via a contract and return the result.
 func (e *zEngine) Execute(contract *MacroContract, params map[string]any) (*sqlx.Rows, error) {
-	Log.Debugf("Executing contract: %s with params: %v", contract.Name, params)
+	Log.Debugw("Executing query contract with params", "contract", contract, "params", params)
+
 	e.database.Prepare(contract)
 	defer e.database.Dismiss(contract)
+
 	result, err := e.database.Execute(contract, params)
 	if err != nil {
 		return nil, err
 	}
+
 	return result, nil
 }
 
 // Inject a core resource to the engine, creating default CRUD endpoints & documentation.
 func (e *zEngine) Inject(cores ...Core) {
-	Log.Debugf("Injecting %d cores", len(cores))
+	Log.Debugw("Injecting data cores", "cores_count", len(cores))
 	for _, core := range cores {
 		meta := core.Meta()
 		e.Register(meta)
 
 		_, err := e.Execute(core.Table(), nil)
 		if err != nil {
-			Log.Fatalf("Failed to create table for %s: %v", meta.Name, err)
+			Log.Fatalw("Failed to create table", "meta", meta, "error", err)
 		}
 		e.Compose(
 			core.Contracts()...,
@@ -103,7 +104,7 @@ func (e *zEngine) Inject(cores ...Core) {
 
 // Prime the engine by setting up middleware & default endpoints
 func (e *zEngine) Prime() {
-	Log.Debug("Priming the engine")
+	Log.Debugw("Priming the engine")
 
 	// Bind services to the HTTP router
 	e.http.Use(func(c *gin.Context) {
@@ -134,19 +135,19 @@ func (e *zEngine) Prime() {
 	// Attach default endpoints
 	e.Attach(
 		// Attach the authentication endpoints w/ documentation
-		&HTTPOperation{
+		&Operation{
 			Name:        "Login",
 			Description: "Endpoint for user login. Redirects to the authentication provider.",
 			Method:      "GET",
 			Path:        "/auth/login",
 			Tag:         "Auth",
 			Handler:     e.auth.LoginHandler,
-			Response: &HTTPResponse{
+			Response: &Response{
 				Status: http.StatusTemporaryRedirect,
 			},
 			Auth: false,
 		},
-		&HTTPOperation{
+		&Operation{
 			Name:        "Logout",
 			Description: "Endpoint for user logout. Clears the session and redirects to the home page.",
 			Method:      "GET",
@@ -157,7 +158,7 @@ func (e *zEngine) Prime() {
 		},
 
 		// Attach the health check endpoint w/ documentation
-		&HTTPOperation{
+		&Operation{
 			Name:        "Health Check",
 			Description: "Endpoint to check the health of the application. Returns a 200 OK status if the application is running.",
 			Method:      "GET",
@@ -171,6 +172,6 @@ func (e *zEngine) Prime() {
 
 // Start the engine by running an HTTP server
 func (e *zEngine) Start() {
-	Log.Debug("Starting the engine")
+	Log.Debugw("Starting the engine")
 	e.http.Serve()
 }

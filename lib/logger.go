@@ -12,15 +12,15 @@ import (
 // Logger is an interface exposing only the basic logging functions you need.
 type Logger interface {
 	Debug(args ...any)
+	Debugw(msg string, args ...any)
 	Info(args ...any)
+	Infow(msg string, args ...any)
 	Warn(args ...any)
+	Warnw(msg string, args ...any)
 	Error(args ...any)
+	Errorw(msg string, args ...any)
 	Fatal(args ...any)
-	Debugf(template string, args ...any)
-	Infof(template string, args ...any)
-	Warnf(template string, args ...any)
-	Errorf(template string, args ...any)
-	Fatalf(template string, args ...any)
+	Fatalw(msg string, args ...any)
 }
 
 // zLogger wraps a zap.SugaredLogger and implements the Logger interface.
@@ -33,14 +33,14 @@ var Log Logger
 
 // Middleware logs incoming requests and their responses using the gin context.
 func LogMiddleware(c *gin.Context) {
-	Log.Debugf("Request: %s %s", c.Request.Method, c.Request.URL.Path)
+	Log.Infow("HTTP Request", "request", c.Request)
 	c.Next()
 	if len(c.Errors) > 0 {
 		for _, err := range c.Errors {
-			Log.Errorf("Error: %v", err)
+			Log.Errorw("HTTP Error", "error", err)
 		}
 	} else {
-		Log.Infof("Response: %d %s", c.Writer.Status(), c.Request.URL.Path)
+		Log.Infow("HTTP Response", "response", c.Request.Response)
 	}
 }
 
@@ -72,5 +72,5 @@ func InitLogger(devMode bool, logFile string) {
 }
 
 func init() {
-	InitLogger(true, "logs/app.log")
+	InitLogger(true, ".logs/app.log")
 }

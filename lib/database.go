@@ -34,7 +34,7 @@ func NewDatabase() Database {
 
 	cx, err := sqlx.Connect("postgres", dsn)
 	if err != nil {
-		Log.Fatal("Failed to connect to database:", err)
+		Log.Fatalw("Failed to connect to database", "error", err)
 	}
 
 	db := &zDatabase{
@@ -50,11 +50,11 @@ func NewDatabase() Database {
 
 // LoadTemplates loads SQLx macros from the specified directory into the database instance.
 func (d *zDatabase) LoadTemplates(dir string) {
-	Log.Infof("Loading query macros from %s", dir)
+	Log.Infow("Loading database query macros", "query_dir", dir)
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		Log.Fatalf("Failed to read query macros directory: %v", err)
+		Log.Fatalw("Failed to read query macros directory", "error", err)
 	}
 
 	macros := make(map[string]Macro)
@@ -73,7 +73,7 @@ func (d *zDatabase) LoadTemplates(dir string) {
 
 		content, err := os.ReadFile(fullPath)
 		if err != nil {
-			Log.Fatalf("Failed to read query template file %s: %v", fullPath, err)
+			Log.Fatalw("Failed to read query template file", "query_template", fullPath, "error", err)
 		}
 
 		macros[key] = NewMacro(key, string(content))

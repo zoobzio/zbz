@@ -3,8 +3,6 @@ package zbz
 import (
 	"fmt"
 	"strings"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 // Macro defines the interface for executing stored SQL queries with parameters
@@ -52,7 +50,8 @@ func NewMacro(name string, template string) Macro {
 
 // Interpolate a query template by replacing placeholders with actual values
 func (q *zMacro) Interpolate(embed map[string]string) (string, error) {
-	Log.Debugf("Interpolating %s query %v", q.Name, spew.Sdump(embed))
+	Log.Debugw("Interpolating query", "query", q, "embeddings", embed)
+
 	// TODO embedded content is raw sql - add some sanitization or validation to mitigate SQL injection risk
 	query := q.Template
 	for _, property := range q.Embeddings {
@@ -67,6 +66,5 @@ func (q *zMacro) Interpolate(embed map[string]string) (string, error) {
 		}
 	}
 
-	Log.Debugf("Interpolated query: %s", query)
 	return query, nil
 }

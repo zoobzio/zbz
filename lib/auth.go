@@ -38,7 +38,7 @@ func NewAuth() Auth {
 		fmt.Sprintf("https://%s/", config.AuthDomain()),
 	)
 	if err != nil {
-		Log.Fatal("Failed to create OIDC provider:", err)
+		Log.Fatalw("Failed to create OIDC provider", "error", err)
 	}
 
 	oauth := oauth2.Config{

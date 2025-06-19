@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"zbz/internal/models"
+	"zbz/cmd/example/internal/models"
 	"zbz/lib"
 )
 
@@ -12,7 +12,7 @@ func main() {
 
 	_, _, err := zbz.InitTelemetry(ctx, "zbz")
 	if err != nil {
-		zbz.Log.Fatalf("failed to initialize tracer: %v", err)
+		zbz.Log.Fatalw("Failed to initialize tracer", "error", err)
 	}
 
 	e := zbz.NewEngine()

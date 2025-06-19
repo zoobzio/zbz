@@ -16,7 +16,7 @@ type Core interface {
 
 	Table() *MacroContract
 	Contracts() []*MacroContract
-	Operations() []*HTTPOperation
+	Operations() []*Operation
 
 	CreateHandler(ctx *gin.Context)
 	ReadHandler(ctx *gin.Context)
@@ -99,9 +99,9 @@ func (c *zCore[T]) Contracts() []*MacroContract {
 }
 
 // Operations returns the HTTP operations for creating, reading, updating, and deleting the core resource.
-func (c *zCore[T]) Operations() []*HTTPOperation {
+func (c *zCore[T]) Operations() []*Operation {
 	meta := c.Meta()
-	return []*HTTPOperation{
+	return []*Operation{
 		{
 			Name:        fmt.Sprintf("Create %s", meta.Name),
 			Description: fmt.Sprintf("Create a new `%s` in the database.", meta.Name),
@@ -109,7 +109,7 @@ func (c *zCore[T]) Operations() []*HTTPOperation {
 			Path:        fmt.Sprintf("/%s", strings.ToLower(meta.Name)),
 			Tag:         meta.Name,
 			RequestBody: fmt.Sprintf("Create%sPayload", meta.Name),
-			Response: &HTTPResponse{
+			Response: &Response{
 				Status: http.StatusCreated,
 				Ref:    meta.Name,
 				Errors: []int{
@@ -126,7 +126,7 @@ func (c *zCore[T]) Operations() []*HTTPOperation {
 			Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(meta.Name)),
 			Tag:         meta.Name,
 			Parameters:  []string{"Id"},
-			Response: &HTTPResponse{
+			Response: &Response{
 				Status: http.StatusOK,
 				Ref:    meta.Name,
 				Errors: []int{
@@ -145,7 +145,7 @@ func (c *zCore[T]) Operations() []*HTTPOperation {
 			Tag:         meta.Name,
 			Parameters:  []string{"Id"},
 			RequestBody: fmt.Sprintf("Update%sPayload", meta.Name),
-			Response: &HTTPResponse{
+			Response: &Response{
 				Status: http.StatusOK,
 				Ref:    meta.Name,
 				Errors: []int{
@@ -163,7 +163,7 @@ func (c *zCore[T]) Operations() []*HTTPOperation {
 			Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(meta.Name)),
 			Tag:         meta.Name,
 			Parameters:  []string{"Id"},
-			Response: &HTTPResponse{
+			Response: &Response{
 				Status: http.StatusNoContent,
 			},
 			Handler: c.DeleteHandler,

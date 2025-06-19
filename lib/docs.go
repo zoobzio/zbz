@@ -13,7 +13,7 @@ import (
 // Docs is an interface for API documentation functionality
 type Docs interface {
 	AddTag(name, description string)
-	AddPath(op *HTTPOperation)
+	AddPath(op *Operation)
 	AddParameter(param *OpenAPIParameter)
 	AddSchema(meta *Meta)
 
@@ -78,7 +78,7 @@ func (d *zDocs) AddBody(body *OpenAPISchema) {
 }
 
 // AddPath adds a new path to the OpenAPI specification
-func (d *zDocs) AddPath(op *HTTPOperation) {
+func (d *zDocs) AddPath(op *Operation) {
 	if d.spec.Paths[op.Path] == nil {
 		d.spec.Paths[op.Path] = make(map[string]*OpenAPIPath)
 	}
@@ -165,7 +165,7 @@ func (d *zDocs) AddPath(op *HTTPOperation) {
 func (d *zDocs) AddSchema(meta *Meta) {
 	example, err := json.Marshal(meta.Example)
 	if err != nil {
-		Log.Fatalf("Failed to marshal example for model %s: %v", meta.Name, err)
+		Log.Fatalw("Failed to marshal example for model", meta, err)
 	}
 
 	schema := &OpenAPISchema{

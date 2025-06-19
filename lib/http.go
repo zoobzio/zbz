@@ -17,16 +17,8 @@ type HTTP interface {
 	PUT(path string, handlers ...gin.HandlerFunc) gin.IRoutes
 	DELETE(path string, handlers ...gin.HandlerFunc) gin.IRoutes
 
-	AddRoute(operation *HTTPOperation) gin.IRoutes
+	AddRoute(operation *Operation) gin.IRoutes
 	Serve() error
-}
-
-// HTTPResponse represents a response structure for an HTTP operation
-type HTTPResponse struct {
-	Status int
-	Ref    string
-	Type   string
-	Errors []int
 }
 
 // HTTPPathParameter represents a path parameter in an HTTP request
@@ -49,18 +41,26 @@ type HTTPRequestBody struct {
 	Required    bool
 }
 
-// HTTPOperation represents a given API action that can be used to register endpoints & spawn documentation
-type HTTPOperation struct {
+// Response represents a response structure for an HTTP operation
+type Response struct {
+	Status int
+	Ref    string
+	Type   string
+	Errors []int
+}
+
+// Operation represents a given API action that can be used to register endpoints & spawn documentation
+type Operation struct {
 	Name        string
 	Description string
 	Tag         string
 	Method      string
 	Path        string
-	Handler     gin.HandlerFunc
+	Handler     gin.HandlerFunc `json:"-"`
 	Parameters  []string
 	Query       []string
 	RequestBody string
-	Response    *HTTPResponse
+	Response    *Response
 	Auth        bool
 }
 
@@ -92,13 +92,13 @@ func NewHTTP() HTTP {
 
 // LoadTemplates loads HTML templates from the specified directory
 func (h *zHTTP) LoadTemplates(dir string) {
-	Log.Debugf("Loading templates from %s", dir)
+	Log.Debugw("Loading HTML templates", "templates_dir", dir)
 	h.LoadHTMLGlob(dir)
 }
 
 // Register an HTTP operation with the Gin router
-func (h *zHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
-	Log.Debugf("[%s] %s", operation.Method, operation.Path)
+func (h *zHTTP) AddRoute(operation *Operation) gin.IRoutes {
+	Log.Debugw("Attaching HTTP route", "operation", operation)
 
 	path := operation.Path
 	re := regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
@@ -115,7 +115,7 @@ func (h *zHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
 	case "DELETE":
 		route = h.DELETE(path, operation.Handler)
 	default:
-		Log.Errorf("Unsupported HTTP method: %s", operation.Method)
+		Log.Errorw("Unsupported HTTP method", operation.Method)
 		return nil
 	}
 
@@ -124,6 +124,6 @@ func (h *zHTTP) AddRoute(operation *HTTPOperation) gin.IRoutes {
 
 // Serve the HTTP router on the configured port
 func (h *zHTTP) Serve() error {
-	Log.Infof("Starting HTTP server on port %s", config.Port())
+	Log.Infow("Starting HTTP server", "port", config.Port())
 	return h.Run(":" + config.Port())
 }
