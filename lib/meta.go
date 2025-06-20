@@ -121,7 +121,7 @@ func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
 		if d != "-" {
 			c = append(c, d)
 		}
-		ex[n] = exv
+		ex[d] = exv
 	}
 
 	return f, c, ex

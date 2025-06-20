@@ -24,6 +24,7 @@ type Docs interface {
 // Docs represents the documentation structure for an API
 type zDocs struct {
 	spec *OpenAPISpec
+	yaml []byte
 }
 
 // NewDocs creates a new Docs instance
@@ -224,7 +225,7 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			ff = "byte"
 		}
 
-		schema.Properties[field.Name] = &OpenAPISchema{
+		schema.Properties[field.DstName] = &OpenAPISchema{
 			Type:        ft,
 			Format:      ff,
 			Description: field.Description,
@@ -232,7 +233,7 @@ func (d *zDocs) AddSchema(meta *Meta) {
 		}
 
 		if field.Required {
-			schema.Required = append(schema.Required, field.Name)
+			schema.Required = append(schema.Required, field.DstName)
 		}
 
 		// TODO we can handle edit permissions here using the value of field.Edit
@@ -244,11 +245,11 @@ func (d *zDocs) AddSchema(meta *Meta) {
 				Example:     field.Example,
 			}
 
-			createPayload.Properties[field.Name] = payload
-			updatePayload.Properties[field.Name] = payload
+			createPayload.Properties[field.DstName] = payload
+			updatePayload.Properties[field.DstName] = payload
 
 			if field.Required {
-				createPayload.Required = append(createPayload.Required, field.Name)
+				createPayload.Required = append(createPayload.Required, field.DstName)
 			}
 		}
 	}
@@ -258,13 +259,21 @@ func (d *zDocs) AddSchema(meta *Meta) {
 	d.spec.Components.RequestBodies[fmt.Sprintf("Update%sPayload", meta.Name)] = updatePayload
 }
 
+// GenerateYAML generates the OpenAPI specification in YAML format
+func (d *zDocs) GenerateYAML(spec *OpenAPISpec) {
+	data, err := yaml.Marshal(spec)
+	if err != nil {
+		Log.Fatalw("failed to marshal OpenAPI spec to YAML", "error", err)
+	}
+	d.yaml = data
+}
+
 // SpecHandler generates and returns the OpenAPI specification in YAML format
 func (d *zDocs) SpecHandler(ctx *gin.Context) {
-	spec, err := yaml.Marshal(d.spec)
-	if err != nil {
-		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate OpenAPI spec"})
+	if d.yaml == nil {
+		d.GenerateYAML(d.spec)
 	}
-	ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", spec)
+	ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", d.yaml)
 }
 
 // ScalarHandler renders a documentation site built using Scalar: https://scalar.com/

@@ -14,7 +14,7 @@ import (
 // Database provides methods to interact with the database.
 type Database interface {
 	Prepare(contract *MacroContract) error
-	Execute(contract *MacroContract, params map[string]any) (*sqlx.Rows, error)
+	Execute(contract *MacroContract, params any) (*sqlx.Rows, error)
 	Dismiss(contract *MacroContract) error
 }
 
@@ -105,7 +105,7 @@ func (d *zDatabase) Prepare(contract *MacroContract) error {
 }
 
 // Execute a prepared SQL statement with the provided parameters.
-func (d *zDatabase) Execute(contract *MacroContract, params map[string]any) (*sqlx.Rows, error) {
+func (d *zDatabase) Execute(contract *MacroContract, params any) (*sqlx.Rows, error) {
 	stmt, ok := d.statements[contract.Name]
 	if !ok {
 		return nil, fmt.Errorf("statement %s not found", contract.Name)

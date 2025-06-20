@@ -33,15 +33,9 @@ var Log Logger
 
 // Middleware logs incoming requests and their responses using the gin context.
 func LogMiddleware(c *gin.Context) {
-	Log.Infow("HTTP Request", "request", c.Request)
+	Log.Infow("HTTP Request")
 	c.Next()
-	if len(c.Errors) > 0 {
-		for _, err := range c.Errors {
-			Log.Errorw("HTTP Error", "error", err)
-		}
-	} else {
-		Log.Infow("HTTP Response", "response", c.Request.Response)
-	}
+	Log.Infow("HTTP Response")
 }
 
 // InitLogger initializes the global logger with zap, supporting file and console outputs.

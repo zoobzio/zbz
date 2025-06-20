@@ -3,4 +3,4 @@
 -- @embed table The name of the table to insert into 
 -- @embed columns The columns to insert values into as a string (e.x. "id, name")
 -- @embed values  The values to insert into the columns as a string (e.x. "'c52f5709-1935-4a7f-b638-ec94370fa08a', 'John Doe'")
-INSERT INTO "{{table}}" ({{columns}}) VALUES ({{values}});
+INSERT INTO "{{table}}" ({{columns}}) VALUES ({{values}}) RETURNING {{columns}};

@@ -1,0 +1,5 @@
+-- Select all columns from a given table where id matches
+--
+-- @embed table   The name of the table to select from
+-- @embed columns The columns to select as a string (e.g., "id, name, email")
+SELECT {{columns}} FROM "{{table}}" WHERE id = :id;
