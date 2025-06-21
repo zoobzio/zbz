@@ -1,8 +1,6 @@
 package zbz
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 )
@@ -130,44 +128,12 @@ func (e *zEngine) Prime() {
 	e.http.GET("/docs", e.docs.ScalarHandler)
 
 	// Add auth endpoints w/o documentation
+	e.http.GET("/auth/login", e.auth.LoginHandler)
 	e.http.POST("/auth/callback", e.auth.CallbackHandler)
+	e.http.GET("/auth/logout", e.auth.LogoutHandler)
 
-	// Attach default endpoints
-	e.Attach(
-		// Attach the authentication endpoints w/ documentation
-		&Operation{
-			Name:        "Login",
-			Description: "Endpoint for user login. Redirects to the authentication provider.",
-			Method:      "GET",
-			Path:        "/auth/login",
-			Tag:         "Auth",
-			Handler:     e.auth.LoginHandler,
-			Response: &Response{
-				Status: http.StatusTemporaryRedirect,
-			},
-			Auth: false,
-		},
-		&Operation{
-			Name:        "Logout",
-			Description: "Endpoint for user logout. Clears the session and redirects to the home page.",
-			Method:      "GET",
-			Path:        "/auth/logout",
-			Tag:         "Auth",
-			Handler:     e.auth.LogoutHandler,
-			Auth:        false,
-		},
-
-		// Attach the health check endpoint w/ documentation
-		&Operation{
-			Name:        "Health Check",
-			Description: "Endpoint to check the health of the application. Returns a 200 OK status if the application is running.",
-			Method:      "GET",
-			Path:        "/health",
-			Tag:         "Health",
-			Handler:     e.health.HealthCheckHandler,
-			Auth:        false,
-		},
-	)
+	// Add health check endpoint w/o documentation
+	e.http.GET("/health", e.health.HealthCheckHandler)
 }
 
 // Start the engine by running an HTTP server

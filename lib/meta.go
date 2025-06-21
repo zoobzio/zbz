@@ -128,7 +128,7 @@ func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
 }
 
 // ExtractMeta extracts metadata from a given model type T, which must implement BaseModel.
-func extractMeta[T BaseModel]() *Meta {
+func extractMeta[T BaseModel](desc string) *Meta {
 	var model T
 	t := reflect.TypeOf(model)
 
@@ -137,7 +137,7 @@ func extractMeta[T BaseModel]() *Meta {
 
 	meta := &Meta{
 		Name:        t.Name(),
-		Description: "fix me", // c.description,
+		Description: desc,
 		Fields:      make([]*Meta, 0, t.NumField()+bt.NumField()),
 		Columns:     make([]string, 0, t.NumField()+bt.NumField()),
 	}

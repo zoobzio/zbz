@@ -34,7 +34,7 @@ type zCore[T BaseModel] struct {
 
 // NewCore creates a new instance of zCore with the provided logger, config, and database.
 func NewCore[T BaseModel](desc string) Core {
-	meta := extractMeta[T]()
+	meta := extractMeta[T](desc)
 	return &zCore[T]{
 		meta:        meta,
 		description: desc,
@@ -148,17 +148,16 @@ func (c *zCore[T]) Contracts() []*MacroContract {
 
 // Operations returns the HTTP operations for creating, reading, updating, and deleting the core resource.
 func (c *zCore[T]) createOperations() {
-	meta := c.Meta()
 	c.operations["create"] = &Operation{
-		Name:        fmt.Sprintf("Create %s", meta.Name),
-		Description: fmt.Sprintf("Create a new `%s` in the database.", meta.Name),
+		Name:        fmt.Sprintf("Create %s", c.meta.Name),
+		Description: fmt.Sprintf("Create a new `%s` in the database.", c.meta.Name),
 		Method:      "POST",
-		Path:        fmt.Sprintf("/%s", strings.ToLower(meta.Name)),
-		Tag:         meta.Name,
-		RequestBody: fmt.Sprintf("Create%sPayload", meta.Name),
+		Path:        fmt.Sprintf("/%s", strings.ToLower(c.meta.Name)),
+		Tag:         c.meta.Name,
+		RequestBody: fmt.Sprintf("Create%sPayload", c.meta.Name),
 		Response: &Response{
 			Status: http.StatusCreated,
-			Ref:    meta.Name,
+			Ref:    c.meta.Name,
 			Errors: []int{
 				http.StatusBadRequest,
 			},
@@ -167,15 +166,15 @@ func (c *zCore[T]) createOperations() {
 		Auth:    true,
 	}
 	c.operations["read"] = &Operation{
-		Name:        fmt.Sprintf("Get %s", meta.Name),
-		Description: fmt.Sprintf("Get a specific `%s` by ID.", meta.Name),
+		Name:        fmt.Sprintf("Get %s", c.meta.Name),
+		Description: fmt.Sprintf("Get a specific `%s` by ID.", c.meta.Name),
 		Method:      "GET",
-		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(meta.Name)),
-		Tag:         meta.Name,
+		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(c.meta.Name)),
+		Tag:         c.meta.Name,
 		Parameters:  []string{"Id"},
 		Response: &Response{
 			Status: http.StatusOK,
-			Ref:    meta.Name,
+			Ref:    c.meta.Name,
 			Errors: []int{
 				http.StatusBadRequest,
 				http.StatusNotFound,
@@ -185,16 +184,16 @@ func (c *zCore[T]) createOperations() {
 		Auth:    true,
 	}
 	c.operations["update"] = &Operation{
-		Name:        fmt.Sprintf("Update %s", meta.Name),
-		Description: fmt.Sprintf("Update a specific `%s` by ID.", meta.Name),
+		Name:        fmt.Sprintf("Update %s", c.meta.Name),
+		Description: fmt.Sprintf("Update a specific `%s` by ID.", c.meta.Name),
 		Method:      "PUT",
-		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(meta.Name)),
-		Tag:         meta.Name,
+		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(c.meta.Name)),
+		Tag:         c.meta.Name,
 		Parameters:  []string{"Id"},
-		RequestBody: fmt.Sprintf("Update%sPayload", meta.Name),
+		RequestBody: fmt.Sprintf("Update%sPayload", c.meta.Name),
 		Response: &Response{
 			Status: http.StatusOK,
-			Ref:    meta.Name,
+			Ref:    c.meta.Name,
 			Errors: []int{
 				http.StatusBadRequest,
 				http.StatusNotFound,
@@ -204,11 +203,11 @@ func (c *zCore[T]) createOperations() {
 		Auth:    true,
 	}
 	c.operations["delete"] = &Operation{
-		Name:        fmt.Sprintf("Delete %s", meta.Name),
-		Description: fmt.Sprintf("Delete a specific `%s` by ID.", meta.Name),
+		Name:        fmt.Sprintf("Delete %s", c.meta.Name),
+		Description: fmt.Sprintf("Delete a specific `%s` by ID.", c.meta.Name),
 		Method:      "DELETE",
-		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(meta.Name)),
-		Tag:         meta.Name,
+		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(c.meta.Name)),
+		Tag:         c.meta.Name,
 		Parameters:  []string{"Id"},
 		Response: &Response{
 			Status: http.StatusNoContent,

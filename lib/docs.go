@@ -67,7 +67,7 @@ func (d *zDocs) AddParameter(param *OpenAPIParameter) {
 	if d.spec.Components.Parameters == nil {
 		d.spec.Components.Parameters = make(map[string]*OpenAPIParameter)
 	}
-	d.spec.Components.Parameters[toPascalCase(param.Name)] = param
+	d.spec.Components.Parameters[param.Name] = param
 }
 
 // AddBody adds a new request body to the OpenAPI specification
@@ -75,7 +75,7 @@ func (d *zDocs) AddBody(body *OpenAPISchema) {
 	if d.spec.Components.RequestBodies == nil {
 		d.spec.Components.RequestBodies = make(map[string]*OpenAPISchema)
 	}
-	d.spec.Components.RequestBodies[toPascalCase(body.Description)] = body
+	d.spec.Components.RequestBodies[body.Description] = body
 }
 
 // AddPath adds a new path to the OpenAPI specification
@@ -94,7 +94,7 @@ func (d *zDocs) AddPath(op *Operation) {
 			responses[op.Response.Status].Content = &OpenAPIContent{
 				ApplicationJSON: &OpenAPIApplicationJSON{
 					Schema: &OpenAPISchema{
-						Ref: fmt.Sprintf("#/components/schemas/%s", toPascalCase(op.Response.Ref)),
+						Ref: fmt.Sprintf("#/components/schemas/%s", op.Response.Ref),
 					},
 				},
 			}
@@ -125,7 +125,7 @@ func (d *zDocs) AddPath(op *Operation) {
 	path := &OpenAPIPath{
 		Summary:     op.Name,
 		Description: op.Description,
-		OperationId: toPascalCase(op.Name),
+		OperationId: op.Name,
 		Tags:        []string{op.Tag},
 		Parameters:  []*OpenAPIRef{},
 		Responses:   responses,
@@ -140,7 +140,7 @@ func (d *zDocs) AddPath(op *Operation) {
 	if op.Parameters != nil {
 		for _, param := range op.Parameters {
 			path.Parameters = append(path.Parameters, &OpenAPIRef{
-				Ref: fmt.Sprintf("#/components/parameters/%s", toPascalCase(param)),
+				Ref: fmt.Sprintf("#/components/parameters/%s", param),
 			})
 		}
 	}
@@ -152,14 +152,14 @@ func (d *zDocs) AddPath(op *Operation) {
 			Content: &OpenAPIContent{
 				ApplicationJSON: &OpenAPIApplicationJSON{
 					Schema: &OpenAPISchema{
-						Ref: fmt.Sprintf("#/components/requestBodies/%s", toPascalCase(op.RequestBody)),
+						Ref: fmt.Sprintf("#/components/requestBodies/%s", op.RequestBody),
 					},
 				},
 			},
 		}
 	}
 
-	d.spec.Paths[op.Path][toLowerCase(op.Method)] = path
+	d.spec.Paths[op.Path][strings.ToLower(op.Method)] = path
 }
 
 // AddSchema adds a new schema to the OpenAPI specification
@@ -254,7 +254,7 @@ func (d *zDocs) AddSchema(meta *Meta) {
 		}
 	}
 
-	d.spec.Components.Schemas[toPascalCase(meta.Name)] = schema
+	d.spec.Components.Schemas[meta.Name] = schema
 	d.spec.Components.RequestBodies[fmt.Sprintf("Create%sPayload", meta.Name)] = createPayload
 	d.spec.Components.RequestBodies[fmt.Sprintf("Update%sPayload", meta.Name)] = updatePayload
 }
