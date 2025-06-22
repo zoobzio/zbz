@@ -40,6 +40,9 @@ type Meta struct {
 	// Edit is a string that indicates how the field should be edited, such as "text", "select", etc.
 	Edit string
 
+	// Scope contains the scope requirements for this field
+	Scope string
+
 	// Columns is a list of database column names that correspond to the fields in the model.
 	Columns []string
 
@@ -61,6 +64,7 @@ func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
 		s := field.Tag.Get("desc")
 		v := field.Tag.Get("validate")
 		e := field.Tag.Get("edit")
+		sc := field.Tag.Get("scope")
 		x := field.Tag.Get("ex")
 		t := field.Type.String()
 		st := "text"
@@ -121,6 +125,7 @@ func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
 			Required:    strings.Contains(v, "required"),
 			Validate:    v,
 			Edit:        e,
+			Scope:       sc,
 			Example:     exv,
 		})
 		if d != "-" {

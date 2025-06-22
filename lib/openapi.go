@@ -78,6 +78,9 @@ type OpenAPISchema struct {
 	Default  any   `yaml:"default,omitempty"`
 	ReadOnly bool  `yaml:"readOnly,omitempty"`
 	WriteOnly bool `yaml:"writeOnly,omitempty"`
+	
+	// Extensions for custom properties (x-*)
+	Extensions map[string]any `yaml:",inline"`
 }
 
 // OpenAPIResponseApplicationJSON represents the application/json response in an OpenAPI specification

@@ -177,9 +177,28 @@ func (e *zEngine) Prime() {
 		},
 	})
 
-	// Add documentation endpoints
-	e.http.GET("/openapi", e.docs.SpecHandler)
-	e.http.GET("/docs", e.docs.ScalarHandler)
+	// Add authenticated documentation endpoints
+	docsOp := &Operation{
+		Name:        "Get OpenAPI Specification",
+		Description: "Get OpenAPI specification (full for admins, scoped for users)",
+		Method:      "GET",
+		Path:        "/openapi",
+		Auth:        true,
+		Handler:     e.docs.SpecHandler,
+	}
+	e.http.AddRoute(docsOp)
+	
+	scalarOp := &Operation{
+		Name:        "View Interactive API Documentation", 
+		Description: "View interactive API documentation (full for admins, scoped for users)",
+		Method:      "GET",
+		Path:        "/docs",
+		Auth:        true,
+		Handler:     e.docs.ScalarHandler,
+	}
+	e.http.AddRoute(scalarOp)
+	
+	// Schema endpoint remains unauthenticated for basic introspection
 	e.http.GET("/schema", e.schema.SchemaHandler)
 
 	// Add auth endpoints w/o documentation

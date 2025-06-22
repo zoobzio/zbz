@@ -262,6 +262,20 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			Example:     field.Example,
 		}
 		
+		// Handle scoped fields - mark as optional for SDK generation
+		isScoped := field.Scope != ""
+		originallyRequired := field.Required
+		
+		if isScoped {
+			// Add scope extensions for SDK generators to understand field permissions
+			if fieldSchema.Extensions == nil {
+				fieldSchema.Extensions = make(map[string]any)
+			}
+			fieldSchema.Extensions["x-scope"] = field.Scope
+			fieldSchema.Extensions["x-scope-required"] = originallyRequired
+			fieldSchema.Extensions["x-scope-description"] = "This field may be undefined if the user lacks the required permissions"
+		}
+		
 		// Apply validation constraints from struct tags using our validation system
 		rules := validate.ParseValidationRules(field.Validate)
 		constraints := validate.GetOpenAPIConstraints(rules, ft)
@@ -308,7 +322,9 @@ func (d *zDocs) AddSchema(meta *Meta) {
 		
 		schema.Properties[field.DstName] = fieldSchema
 
-		if field.Required {
+		// For response schemas, scoped fields are always optional (even if DB requires them)
+		// since they might be filtered out based on user permissions
+		if field.Required && !isScoped {
 			schema.Required = append(schema.Required, field.DstName)
 		}
 
@@ -364,12 +380,26 @@ func (d *zDocs) AddSchema(meta *Meta) {
 				}
 			}
 
+			// Handle scoped fields in payloads
+			if isScoped {
+				// Add scope extensions to payload fields too
+				if payload.Extensions == nil {
+					payload.Extensions = make(map[string]any)
+				}
+				payload.Extensions["x-scope"] = field.Scope
+				payload.Extensions["x-scope-required"] = originallyRequired
+				payload.Extensions["x-scope-description"] = "This field requires specific permissions to modify"
+			}
+			
 			createPayload.Properties[field.DstName] = payload
 			updatePayload.Properties[field.DstName] = payload
 
+			// For create payloads, scoped fields that are required in DB still need to be provided
+			// (the scoping happens at runtime during deserialization)
 			if field.Required {
 				createPayload.Required = append(createPayload.Required, field.DstName)
 			}
+			// Update payloads are always optional since they're PATCH-style
 		}
 	}
 
@@ -407,18 +437,240 @@ func (d *zDocs) GenerateYAML(spec *OpenAPISpec) {
 }
 
 // SpecHandler generates and returns the OpenAPI specification in YAML format
+// Shows full schema for admins, scoped schema for regular users
 func (d *zDocs) SpecHandler(ctx *gin.Context) {
-	if d.yaml == nil {
-		d.GenerateYAML(d.spec)
+	// Get user permissions from context
+	permissions, exists := ctx.Get("permissions")
+	if !exists {
+		permissions = []string{} // No permissions
 	}
-	ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", d.yaml)
+
+	userPerms, ok := permissions.([]string)
+	if !ok {
+		userPerms = []string{}
+	}
+
+	// Check if user has admin privileges (can see everything)
+	if d.hasAdminAccess(userPerms) {
+		// Return full static schema for admins
+		if d.yaml == nil {
+			d.GenerateYAML(d.spec)
+		}
+		ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", d.yaml)
+	} else {
+		// Return scoped schema for regular users
+		scopedSpec := d.filterSpecByPermissions(d.spec, userPerms)
+		
+		data, err := yaml.Marshal(scopedSpec)
+		if err != nil {
+			Log.Error("Failed to marshal scoped OpenAPI spec to YAML", zap.Error(err))
+			ctx.Status(http.StatusInternalServerError)
+			return
+		}
+		
+		ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", data)
+	}
 }
 
 // ScalarHandler renders a documentation site built using Scalar: https://scalar.com/
+// Shows full docs for admins, scoped docs for regular users
 func (d *zDocs) ScalarHandler(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "scalar.tmpl", gin.H{
 		"title":   config.Title(),
-		"openapi": "/openapi",
+		"openapi": "/openapi", // Always points to the same endpoint, but it returns different content based on user permissions
 	})
+}
+
+// hasAdminAccess checks if the user has admin-level access to see everything
+func (d *zDocs) hasAdminAccess(userPermissions []string) bool {
+	// Check for admin scopes that should see everything
+	adminScopes := []string{
+		"admin",
+		"admin:all", 
+		"read:admin",
+		"admin:users",
+		"read:admin:users",
+	}
+	
+	for _, userPerm := range userPermissions {
+		for _, adminScope := range adminScopes {
+			if userPerm == adminScope {
+				return true
+			}
+		}
+	}
+	
+	return false
+}
+
+// filterSpecByPermissions creates a copy of the OpenAPI spec filtered by user permissions
+func (d *zDocs) filterSpecByPermissions(spec *OpenAPISpec, userPermissions []string) *OpenAPISpec {
+	// Create a deep copy of the spec
+	filteredSpec := &OpenAPISpec{
+		OpenAPI: spec.OpenAPI,
+		Info:    spec.Info,
+		Components: &OpenAPIComponents{
+			Parameters:      spec.Components.Parameters,
+			SecuritySchemes: spec.Components.SecuritySchemes,
+			Schemas:         make(map[string]*OpenAPISchema),
+			RequestBodies:   make(map[string]*OpenAPIRequestBody),
+		},
+		Paths: spec.Paths, // Paths don't need filtering, only schemas
+		Tags:  spec.Tags,
+	}
+
+	// Filter schemas by removing fields the user can't access
+	for name, schema := range spec.Components.Schemas {
+		filteredSpec.Components.Schemas[name] = d.filterSchemaByPermissions(schema, userPermissions)
+	}
+	
+	// Filter request bodies
+	for name, reqBody := range spec.Components.RequestBodies {
+		filteredSpec.Components.RequestBodies[name] = d.filterRequestBodyByPermissions(reqBody, userPermissions)
+	}
+
+	return filteredSpec
+}
+
+// filterSchemaByPermissions removes fields from a schema that the user cannot access
+func (d *zDocs) filterSchemaByPermissions(schema *OpenAPISchema, userPermissions []string) *OpenAPISchema {
+	if schema == nil || schema.Properties == nil {
+		return schema
+	}
+
+	// Create a copy of the schema
+	filteredSchema := &OpenAPISchema{
+		Type:        schema.Type,
+		Description: schema.Description,
+		Example:     schema.Example,
+		Properties:  make(map[string]*OpenAPISchema),
+		Required:    []string{},
+	}
+
+	// Check each property for scope requirements
+	for fieldName, fieldSchema := range schema.Properties {
+		if d.canUserAccessField(fieldSchema, userPermissions, "read") {
+			filteredSchema.Properties[fieldName] = fieldSchema
+			
+			// Only add to required if user can access the field
+			for _, reqField := range schema.Required {
+				if reqField == fieldName {
+					filteredSchema.Required = append(filteredSchema.Required, fieldName)
+					break
+				}
+			}
+		}
+		// If user can't access field, it's simply omitted from the filtered schema
+	}
+
+	return filteredSchema
+}
+
+// filterRequestBodyByPermissions filters request body schemas based on user permissions
+func (d *zDocs) filterRequestBodyByPermissions(reqBody *OpenAPIRequestBody, userPermissions []string) *OpenAPIRequestBody {
+	if reqBody == nil || reqBody.Content == nil || reqBody.Content.ApplicationJSON == nil {
+		return reqBody
+	}
+
+	// Create a copy and filter the schema
+	filteredReqBody := &OpenAPIRequestBody{
+		Description: reqBody.Description,
+		Required:    reqBody.Required,
+		Ref:         reqBody.Ref,
+		Content: &OpenAPIContent{
+			ApplicationJSON: &OpenAPIApplicationJSON{
+				Schema: d.filterRequestBodySchemaByPermissions(reqBody.Content.ApplicationJSON.Schema, userPermissions),
+			},
+		},
+	}
+
+	return filteredReqBody
+}
+
+// filterRequestBodySchemaByPermissions filters request body schemas for write permissions
+func (d *zDocs) filterRequestBodySchemaByPermissions(schema *OpenAPISchema, userPermissions []string) *OpenAPISchema {
+	if schema == nil || schema.Properties == nil {
+		return schema
+	}
+
+	// Create a copy of the schema
+	filteredSchema := &OpenAPISchema{
+		Type:        schema.Type,
+		Description: schema.Description,
+		Properties:  make(map[string]*OpenAPISchema),
+		Required:    []string{},
+	}
+
+	// Check each property for write scope requirements
+	for fieldName, fieldSchema := range schema.Properties {
+		if d.canUserAccessField(fieldSchema, userPermissions, "write") {
+			filteredSchema.Properties[fieldName] = fieldSchema
+			
+			// Only add to required if user can write the field
+			for _, reqField := range schema.Required {
+				if reqField == fieldName {
+					filteredSchema.Required = append(filteredSchema.Required, fieldName)
+					break
+				}
+			}
+		}
+	}
+
+	return filteredSchema
+}
+
+// canUserAccessField checks if a user has the required permissions to access a field
+func (d *zDocs) canUserAccessField(fieldSchema *OpenAPISchema, userPermissions []string, operation string) bool {
+	if fieldSchema.Extensions == nil {
+		return true // No scope restrictions
+	}
+
+	scopeValue, exists := fieldSchema.Extensions["x-scope"]
+	if !exists {
+		return true // No scope restrictions
+	}
+
+	scopeStr, ok := scopeValue.(string)
+	if !ok {
+		return true // Invalid scope format, allow access
+	}
+
+	// Parse scope requirements similar to cereal.go
+	scopes := strings.Split(scopeStr, ",")
+	var requiredPerms []string
+	
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+
+		// Check if this scope matches the operation we're checking
+		if operation == "read" {
+			if strings.HasPrefix(scope, "read:") || (!strings.Contains(scope, ":write") && !strings.Contains(scope, ":create") && !strings.Contains(scope, ":update")) {
+				perm := strings.TrimPrefix(scope, "read:")
+				requiredPerms = append(requiredPerms, perm)
+			}
+		} else if operation == "write" {
+			if strings.Contains(scope, ":write") || strings.Contains(scope, ":create") || strings.Contains(scope, ":update") {
+				requiredPerms = append(requiredPerms, scope)
+			}
+		}
+	}
+
+	// Check if user has any of the required permissions
+	if len(requiredPerms) == 0 {
+		return true // No specific permissions required
+	}
+
+	for _, userPerm := range userPermissions {
+		for _, reqPerm := range requiredPerms {
+			if userPerm == reqPerm {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
