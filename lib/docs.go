@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
 // Docs is an interface for API documentation functionality
 type Docs interface {
 	AddTag(name, description string)
-	AddPath(op *Operation)
+	AddPath(op *Operation, errorManager ErrorManager)
 	AddParameter(param *OpenAPIParameter)
 	AddSchema(meta *Meta)
 
@@ -31,7 +32,7 @@ type zDocs struct {
 func NewDocs() Docs {
 	return &zDocs{
 		spec: &OpenAPISpec{
-			OpenAPI: "3.0.0",
+			OpenAPI: "3.1.0",
 			Info: &OpenAPIInfo{
 				Title:       config.Title(),
 				Version:     config.Version(),
@@ -39,7 +40,7 @@ func NewDocs() Docs {
 			},
 			Components: &OpenAPIComponents{
 				Parameters:    make(map[string]*OpenAPIParameter),
-				RequestBodies: make(map[string]*OpenAPISchema),
+				RequestBodies: make(map[string]*OpenAPIRequestBody),
 				SecuritySchemes: map[string]*OpenAPISecurityScheme{
 					"Bearer": {
 						Type:   "http",
@@ -71,15 +72,15 @@ func (d *zDocs) AddParameter(param *OpenAPIParameter) {
 }
 
 // AddBody adds a new request body to the OpenAPI specification
-func (d *zDocs) AddBody(body *OpenAPISchema) {
+func (d *zDocs) AddBody(name string, body *OpenAPIRequestBody) {
 	if d.spec.Components.RequestBodies == nil {
-		d.spec.Components.RequestBodies = make(map[string]*OpenAPISchema)
+		d.spec.Components.RequestBodies = make(map[string]*OpenAPIRequestBody)
 	}
-	d.spec.Components.RequestBodies[body.Description] = body
+	d.spec.Components.RequestBodies[name] = body
 }
 
 // AddPath adds a new path to the OpenAPI specification
-func (d *zDocs) AddPath(op *Operation) {
+func (d *zDocs) AddPath(op *Operation, errorManager ErrorManager) {
 	if d.spec.Paths[op.Path] == nil {
 		d.spec.Paths[op.Path] = make(map[string]*OpenAPIPath)
 	}
@@ -102,23 +103,60 @@ func (d *zDocs) AddPath(op *Operation) {
 
 		if op.Response.Errors != nil {
 			for _, status := range op.Response.Errors {
-				responses[status] = &OpenAPIResponse{
-					Description: http.StatusText(status),
+				errorSchema := GetErrorSchema(errorManager, status)
+				if errorSchema != nil {
+					responses[status] = &OpenAPIResponse{
+						Description: http.StatusText(status),
+						Content: &OpenAPIContent{
+							ApplicationJSON: &OpenAPIApplicationJSON{
+								Schema: errorSchema,
+							},
+						},
+					}
+				} else {
+					responses[status] = &OpenAPIResponse{
+						Description: http.StatusText(status),
+					}
 				}
 			}
 		}
 
 		if op.Auth {
-			responses[http.StatusUnauthorized] = &OpenAPIResponse{
-				Description: http.StatusText(http.StatusUnauthorized),
+			unauthorizedSchema := GetErrorSchema(errorManager, http.StatusUnauthorized)
+			if unauthorizedSchema != nil {
+				responses[http.StatusUnauthorized] = &OpenAPIResponse{
+					Description: http.StatusText(http.StatusUnauthorized),
+					Content: &OpenAPIContent{
+						ApplicationJSON: &OpenAPIApplicationJSON{
+							Schema: unauthorizedSchema,
+						},
+					},
+				}
 			}
-			responses[http.StatusForbidden] = &OpenAPIResponse{
-				Description: http.StatusText(http.StatusForbidden),
+			
+			forbiddenSchema := GetErrorSchema(errorManager, http.StatusForbidden)
+			if forbiddenSchema != nil {
+				responses[http.StatusForbidden] = &OpenAPIResponse{
+					Description: http.StatusText(http.StatusForbidden),
+					Content: &OpenAPIContent{
+						ApplicationJSON: &OpenAPIApplicationJSON{
+							Schema: forbiddenSchema,
+						},
+					},
+				}
 			}
 		}
 
-		responses[http.StatusInternalServerError] = &OpenAPIResponse{
-			Description: http.StatusText(http.StatusInternalServerError),
+		internalErrorSchema := GetErrorSchema(errorManager, http.StatusInternalServerError)
+		if internalErrorSchema != nil {
+			responses[http.StatusInternalServerError] = &OpenAPIResponse{
+				Description: http.StatusText(http.StatusInternalServerError),
+				Content: &OpenAPIContent{
+					ApplicationJSON: &OpenAPIApplicationJSON{
+						Schema: internalErrorSchema,
+					},
+				},
+			}
 		}
 	}
 
@@ -147,15 +185,7 @@ func (d *zDocs) AddPath(op *Operation) {
 
 	if op.RequestBody != "" {
 		path.RequestBody = &OpenAPIRequestBody{
-			Description: fmt.Sprintf("Request body for %s", op.Name),
-			Required:    true,
-			Content: &OpenAPIContent{
-				ApplicationJSON: &OpenAPIApplicationJSON{
-					Schema: &OpenAPISchema{
-						Ref: fmt.Sprintf("#/components/requestBodies/%s", op.RequestBody),
-					},
-				},
-			},
+			Ref: fmt.Sprintf("#/components/requestBodies/%s", op.RequestBody),
 		}
 	}
 
@@ -166,7 +196,7 @@ func (d *zDocs) AddPath(op *Operation) {
 func (d *zDocs) AddSchema(meta *Meta) {
 	example, err := json.Marshal(meta.Example)
 	if err != nil {
-		Log.Fatalw("Failed to marshal example for model", meta, err)
+		Log.Fatal("Failed to marshal example for model", zap.Any("meta", meta), zap.Error(err))
 	}
 
 	schema := &OpenAPISchema{
@@ -225,12 +255,58 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			ff = "byte"
 		}
 
-		schema.Properties[field.DstName] = &OpenAPISchema{
+		fieldSchema := &OpenAPISchema{
 			Type:        ft,
 			Format:      ff,
 			Description: field.Description,
 			Example:     field.Example,
 		}
+		
+		// Apply validation constraints from struct tags using our validation system
+		rules := validate.ParseValidationRules(field.Validate)
+		constraints := validate.GetOpenAPIConstraints(rules, ft)
+		for key, value := range constraints {
+			switch key {
+			case "minLength":
+				if v, ok := value.(int); ok {
+					fieldSchema.MinLength = &v
+				}
+			case "maxLength":
+				if v, ok := value.(int); ok {
+					fieldSchema.MaxLength = &v
+				}
+			case "minimum":
+				if v, ok := value.(float64); ok {
+					fieldSchema.Minimum = &v
+				}
+			case "maximum":
+				if v, ok := value.(float64); ok {
+					fieldSchema.Maximum = &v
+				}
+			case "exclusiveMinimum":
+				if v, ok := value.(float64); ok {
+					fieldSchema.ExclusiveMinimum = &v
+				}
+			case "exclusiveMaximum":
+				if v, ok := value.(float64); ok {
+					fieldSchema.ExclusiveMaximum = &v
+				}
+			case "pattern":
+				if v, ok := value.(string); ok {
+					fieldSchema.Pattern = v
+				}
+			case "format":
+				if v, ok := value.(string); ok {
+					fieldSchema.Format = v
+				}
+			case "enum":
+				if v, ok := value.([]any); ok {
+					fieldSchema.Enum = v
+				}
+			}
+		}
+		
+		schema.Properties[field.DstName] = fieldSchema
 
 		if field.Required {
 			schema.Required = append(schema.Required, field.DstName)
@@ -244,6 +320,49 @@ func (d *zDocs) AddSchema(meta *Meta) {
 				Description: field.Description,
 				Example:     field.Example,
 			}
+			
+			// Apply validation constraints to payload schemas too using our validation system
+			payloadConstraints := validate.GetOpenAPIConstraints(rules, ft)
+			for key, value := range payloadConstraints {
+				switch key {
+				case "minLength":
+					if v, ok := value.(int); ok {
+						payload.MinLength = &v
+					}
+				case "maxLength":
+					if v, ok := value.(int); ok {
+						payload.MaxLength = &v
+					}
+				case "minimum":
+					if v, ok := value.(float64); ok {
+						payload.Minimum = &v
+					}
+				case "maximum":
+					if v, ok := value.(float64); ok {
+						payload.Maximum = &v
+					}
+				case "exclusiveMinimum":
+					if v, ok := value.(float64); ok {
+						payload.ExclusiveMinimum = &v
+					}
+				case "exclusiveMaximum":
+					if v, ok := value.(float64); ok {
+						payload.ExclusiveMaximum = &v
+					}
+				case "pattern":
+					if v, ok := value.(string); ok {
+						payload.Pattern = v
+					}
+				case "format":
+					if v, ok := value.(string); ok {
+						payload.Format = v
+					}
+				case "enum":
+					if v, ok := value.([]any); ok {
+						payload.Enum = v
+					}
+				}
+			}
 
 			createPayload.Properties[field.DstName] = payload
 			updatePayload.Properties[field.DstName] = payload
@@ -255,15 +374,34 @@ func (d *zDocs) AddSchema(meta *Meta) {
 	}
 
 	d.spec.Components.Schemas[meta.Name] = schema
-	d.spec.Components.RequestBodies[fmt.Sprintf("Create%sPayload", meta.Name)] = createPayload
-	d.spec.Components.RequestBodies[fmt.Sprintf("Update%sPayload", meta.Name)] = updatePayload
+	
+	// Store request bodies in the proper section
+	d.spec.Components.RequestBodies[fmt.Sprintf("Create%sPayload", meta.Name)] = &OpenAPIRequestBody{
+		Description: fmt.Sprintf("Request body for creating a %s", meta.Name),
+		Required:    true,
+		Content: &OpenAPIContent{
+			ApplicationJSON: &OpenAPIApplicationJSON{
+				Schema: createPayload,
+			},
+		},
+	}
+	
+	d.spec.Components.RequestBodies[fmt.Sprintf("Update%sPayload", meta.Name)] = &OpenAPIRequestBody{
+		Description: fmt.Sprintf("Request body for updating a %s", meta.Name),
+		Required:    true,
+		Content: &OpenAPIContent{
+			ApplicationJSON: &OpenAPIApplicationJSON{
+				Schema: updatePayload,
+			},
+		},
+	}
 }
 
 // GenerateYAML generates the OpenAPI specification in YAML format
 func (d *zDocs) GenerateYAML(spec *OpenAPISpec) {
 	data, err := yaml.Marshal(spec)
 	if err != nil {
-		Log.Fatalw("failed to marshal OpenAPI spec to YAML", "error", err)
+		Log.Fatal("failed to marshal OpenAPI spec to YAML", zap.Error(err))
 	}
 	d.yaml = data
 }
@@ -283,3 +421,4 @@ func (d *zDocs) ScalarHandler(ctx *gin.Context) {
 		"openapi": "/openapi",
 	})
 }
+

@@ -21,6 +21,7 @@ type Config interface {
 	AuthCallback() string
 
 	OtelEndpoint() string
+	RedisURL() string
 
 	DSN() string
 }
@@ -39,6 +40,7 @@ type zConfig struct {
 	authCallback     string `validate:"required"`
 
 	otelEndpoint string `validate:"required"`
+	redisURL     string
 
 	pgHost     string `validate:"required"`
 	pgPort     string `validate:"required"`
@@ -103,6 +105,11 @@ func (c *zConfig) OtelEndpoint() string {
 	return c.otelEndpoint
 }
 
+// RedisURL returns the Redis connection URL for caching.
+func (c *zConfig) RedisURL() string {
+	return c.redisURL
+}
+
 // DSN returns the Data Source Name for connecting to the PostgreSQL database.
 func (c *zConfig) DSN() string {
 	return fmt.Sprintf(
@@ -128,6 +135,9 @@ func init() {
 		authClientID:     os.Getenv("AUTH0_CLIENT_ID"),
 		authClientSecret: os.Getenv("AUTH0_CLIENT_SECRET"),
 		authCallback:     os.Getenv("AUTH0_CALLBACK"),
+
+		otelEndpoint: os.Getenv("OTEL_ENDPOINT"),
+		redisURL:     os.Getenv("REDIS_URL"),
 
 		pgHost:     os.Getenv("POSTGRES_HOST"),
 		pgPort:     os.Getenv("POSTGRES_PORT"),

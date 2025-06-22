@@ -2,17 +2,30 @@ package zbz
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
+
+// CoreContract represents a configuration for how a Core should be exposed via HTTP
+type CoreContract struct {
+	Core        Core
+	Description string   // Description for the OpenAPI tag
+	Handlers    []string // Handler names to enable (nil = all handlers)
+}
 
 // Core is an interface that defines the basic CRUD operations for a resource.
 type Core interface {
 	Description() string
 	Meta() *Meta
+	Contract(description string, handlers ...string) *CoreContract
 
 	Table() *MacroContract
 	Contracts() []*MacroContract
@@ -40,6 +53,15 @@ func NewCore[T BaseModel](desc string) Core {
 		description: desc,
 		contracts:   make(map[string]*MacroContract),
 		operations:  make(map[string]*Operation),
+	}
+}
+
+// Contract creates a CoreContract for HTTP exposure with the given description and optional handler filtering
+func (c *zCore[T]) Contract(description string, handlers ...string) *CoreContract {
+	return &CoreContract{
+		Core:        c,
+		Description: description,
+		Handlers:    handlers, // nil if no handlers specified (enables all)
 	}
 }
 
@@ -171,7 +193,7 @@ func (c *zCore[T]) createOperations() {
 		Method:      "GET",
 		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(c.meta.Name)),
 		Tag:         c.meta.Name,
-		Parameters:  []string{"Id"},
+		Parameters:  []string{"id"},
 		Response: &Response{
 			Status: http.StatusOK,
 			Ref:    c.meta.Name,
@@ -189,7 +211,7 @@ func (c *zCore[T]) createOperations() {
 		Method:      "PUT",
 		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(c.meta.Name)),
 		Tag:         c.meta.Name,
-		Parameters:  []string{"Id"},
+		Parameters:  []string{"id"},
 		RequestBody: fmt.Sprintf("Update%sPayload", c.meta.Name),
 		Response: &Response{
 			Status: http.StatusOK,
@@ -208,7 +230,7 @@ func (c *zCore[T]) createOperations() {
 		Method:      "DELETE",
 		Path:        fmt.Sprintf("/%s/{id}", strings.ToLower(c.meta.Name)),
 		Tag:         c.meta.Name,
-		Parameters:  []string{"Id"},
+		Parameters:  []string{"id"},
 		Response: &Response{
 			Status: http.StatusNoContent,
 		},
@@ -231,34 +253,68 @@ func (c *zCore[T]) Operations() []*Operation {
 
 // CreateHandler handles the creation of a new record.
 func (c *zCore[T]) CreateHandler(ctx *gin.Context) {
-
 	db := ctx.MustGet("db").(Database)
 	if db == nil {
 		Log.Error("Database connection is not available")
-		ctx.Status(http.StatusInternalServerError)
+		ctx.Set("error_message", "Database connection is not available")
+		ctx.Status(http.StatusServiceUnavailable)
 		return
 	}
 
-	payload, err := NewModel[T](ctx)
+	// Get raw JSON from request body
+	jsonData, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		Log.Errorw("Failed to bind JSON payload", "error", err)
-		ctx.Status(http.StatusInternalServerError)
-		return
-	}
-
-	err = validate.IsValid(payload)
-	if err != nil {
-		Log.Errorw("Payload validation failed", "error", err)
+		Log.Error("Failed to read request body", zap.Error(err))
+		ctx.Set("error_message", "Failed to read request body")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
-	Log.Infow("Creating a new record", "model", c.meta.Name, "payload", payload)
+	// Create a new model instance
+	var payload T
+
+	// Use scoped deserialization to validate field access permissions for creation
+	err = DeserializeWithScopes(ctx, jsonData, &payload, OperationCreate)
+	if err != nil {
+		Log.Error("Scoped deserialization failed", zap.Error(err))
+		ctx.Set("error_message", err.Error())
+		ctx.Status(http.StatusForbidden)
+		return
+	}
+
+	// Set model fields (ID, timestamps, etc.) manually since we used scoped deserialization
+	val := reflect.ValueOf(&payload).Elem()
+	modelField := val.FieldByName("Model")
+	if modelField.IsValid() && modelField.CanSet() {
+		model := Model{
+			ID:        uuid.NewString(),
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+		modelField.Set(reflect.ValueOf(model))
+	}
+
+	err = validate.IsValid(payload)
+	if err != nil {
+		Log.Error("Payload validation failed", zap.Error(err))
+		validationErrors := validate.ExtractErrors(err)
+		ctx.Set("error_details", validationErrors)
+		ctx.Set("error_message", "Validation failed")
+		ctx.Status(http.StatusBadRequest)
+		return
+	}
+
+	Log.Info("Creating a new record", zap.String("model", c.meta.Name), zap.Any("payload", payload))
 
 	rows, err := db.Execute(c.contracts["create"], payload)
 	if err != nil {
-		Log.Errorw("Failed to create record", "error", err)
-		ctx.Status(http.StatusInternalServerError)
+		Log.Error("Failed to create record", zap.Error(err))
+		if strings.Contains(err.Error(), "duplicate key") {
+			ctx.Set("error_message", "Resource already exists")
+			ctx.Status(http.StatusConflict)
+		} else {
+			ctx.Status(http.StatusInternalServerError)
+		}
 		return
 	}
 	defer rows.Close()
@@ -268,7 +324,7 @@ func (c *zCore[T]) CreateHandler(ctx *gin.Context) {
 	for rows.Next() {
 		var row T
 		if err := rows.StructScan(&row); err != nil {
-			Log.Errorw("Failed to scan row", "error", err)
+			Log.Error("Failed to scan row", zap.Error(err))
 			ctx.Status(http.StatusInternalServerError)
 			return
 		}
@@ -277,20 +333,23 @@ func (c *zCore[T]) CreateHandler(ctx *gin.Context) {
 
 	if len(results) == 0 {
 		Log.Warn("No records created")
-		ctx.Status(http.StatusNoContent)
+		ctx.Set("error_message", "Failed to create record")
+		ctx.Status(http.StatusInternalServerError)
 		return
 	}
 
 	for i, result := range results {
 		err = validate.IsValid(result)
 		if err != nil {
-			Log.Errorw("Validation failed for created record", "error", err, "index", i)
-			ctx.Status(http.StatusBadRequest)
+			Log.Error("Validation failed for created record", zap.Error(err), zap.Int("index", i))
+			ctx.Set("error_message", "Created record failed validation")
+			ctx.Status(http.StatusInternalServerError)
 			return
 		}
 	}
 
-	ctx.JSON(http.StatusCreated, results[0])
+	// Use scoped serialization for the response
+	RespondWithScopedJSON(ctx, http.StatusCreated, results[0])
 }
 
 // ReadHandler retrieves a record by ID.
@@ -299,29 +358,32 @@ func (c *zCore[T]) ReadHandler(ctx *gin.Context) {
 	db := ctx.MustGet("db").(Database)
 	if db == nil {
 		Log.Error("Database connection is not available")
-		ctx.Status(http.StatusInternalServerError)
+		ctx.Set("error_message", "Database connection is not available")
+		ctx.Status(http.StatusServiceUnavailable)
 		return
 	}
 
 	id := ctx.Param("id")
 	if id == "" {
 		Log.Error("ID parameter is missing")
+		ctx.Set("error_message", "ID parameter is required")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
 	err := validate.IsValidID(id)
 	if err != nil {
-		Log.Errorw("Invalid ID", "error", err, "id", id)
+		Log.Error("Invalid ID", zap.Error(err), zap.String("id", id))
+		ctx.Set("error_message", "Invalid ID format")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
-	Log.Infow("Retrieving a record", "model", c.meta.Name, "id", id)
+	Log.Info("Retrieving a record", zap.String("model", c.meta.Name), zap.String("id", id))
 
 	rows, err := db.Execute(c.contracts["select"], map[string]any{"id": id})
 	if err != nil {
-		Log.Errorw("Failed to retrieve record", "error", err)
+		Log.Error("Failed to retrieve record", zap.Error(err))
 		ctx.Status(http.StatusInternalServerError)
 		return
 	}
@@ -332,7 +394,7 @@ func (c *zCore[T]) ReadHandler(ctx *gin.Context) {
 	for rows.Next() {
 		var row T
 		if err := rows.StructScan(&row); err != nil {
-			Log.Errorw("Failed to scan row", "error", err)
+			Log.Error("Failed to scan row", zap.Error(err))
 			ctx.Status(http.StatusInternalServerError)
 			return
 		}
@@ -340,12 +402,13 @@ func (c *zCore[T]) ReadHandler(ctx *gin.Context) {
 	}
 
 	if len(results) == 0 {
-		Log.Warn("No records found for ID", "id", id)
+		Log.Warn("No records found for ID", zap.String("id", id))
 		ctx.Status(http.StatusNotFound)
 		return
 	}
 
-	ctx.JSON(http.StatusOK, results[0])
+	// Use scoped serialization to filter fields based on user permissions
+	RespondWithScopedJSON(ctx, http.StatusOK, results[0])
 }
 
 // UpdateHandler updates a record by ID.
@@ -353,27 +416,30 @@ func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 	db := ctx.MustGet("db").(Database)
 	if db == nil {
 		Log.Error("Database connection is not available")
-		ctx.Status(http.StatusInternalServerError)
+		ctx.Set("error_message", "Database connection is not available")
+		ctx.Status(http.StatusServiceUnavailable)
 		return
 	}
 
 	id := ctx.Param("id")
 	if id == "" {
 		Log.Error("ID parameter is missing")
+		ctx.Set("error_message", "ID parameter is required")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
 	err := validate.IsValidID(id)
 	if err != nil {
-		Log.Errorw("Invalid ID", "error", err, "id", id)
+		Log.Error("Invalid ID", zap.Error(err), zap.String("id", id))
+		ctx.Set("error_message", "Invalid ID format")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
 	existing, err := db.Execute(c.contracts["select"], map[string]any{"id": id})
 	if err != nil {
-		Log.Errorw("Failed to retrieve existing record", "error", err)
+		Log.Error("Failed to retrieve existing record", zap.Error(err))
 		ctx.Status(http.StatusInternalServerError)
 		return
 	}
@@ -384,7 +450,7 @@ func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 	for existing.Next() {
 		var row T
 		if err := existing.StructScan(&row); err != nil {
-			Log.Errorw("Failed to scan row", "error", err)
+			Log.Error("Failed to scan row", zap.Error(err))
 			ctx.Status(http.StatusInternalServerError)
 			return
 		}
@@ -392,31 +458,58 @@ func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 	}
 
 	if len(eresults) == 0 {
-		Log.Warn("No records found for ID", "id", id)
+		Log.Warn("No records found for ID", zap.String("id", id))
 		ctx.Status(http.StatusNotFound)
 		return
 	}
 
-	payload, err := PatchModel(ctx, &eresults[0])
-	if err != nil {
-		Log.Errorw("Failed to bind JSON payload", "error", err)
-		ctx.Status(http.StatusInternalServerError)
-		return
+	// Get raw JSON from request body
+	var jsonData []byte
+	if ctx.Request.Body != nil {
+		jsonData, err = io.ReadAll(ctx.Request.Body)
+		if err != nil {
+			Log.Error("Failed to read request body", zap.Error(err))
+			ctx.Set("error_message", "Failed to read request body")
+			ctx.Status(http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Create a copy of existing record for patching
+	payload := eresults[0]
+
+	// Use scoped deserialization to validate field access permissions
+	if len(jsonData) > 0 {
+		err = DeserializeWithScopes(ctx, jsonData, &payload, OperationUpdate)
+		if err != nil {
+			Log.Error("Scoped deserialization failed", zap.Error(err))
+			ctx.Set("error_message", err.Error())
+			ctx.Status(http.StatusForbidden)
+			return
+		}
 	}
 
 	err = validate.IsValid(payload)
 	if err != nil {
-		Log.Errorw("Payload validation failed", "error", err)
+		Log.Error("Payload validation failed", zap.Error(err))
+		validationErrors := validate.ExtractErrors(err)
+		ctx.Set("error_details", validationErrors)
+		ctx.Set("error_message", "Validation failed")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
-	Log.Infow("Updating a record", "model", c.meta.Name, "id", id, "payload", payload)
+	Log.Info("Updating a record", zap.String("model", c.meta.Name), zap.String("id", id), zap.Any("payload", payload))
 
 	rows, err := db.Execute(c.contracts["update"], payload)
 	if err != nil {
-		Log.Errorw("Failed to update record", "error", err)
-		ctx.Status(http.StatusInternalServerError)
+		Log.Error("Failed to update record", zap.Error(err))
+		if strings.Contains(err.Error(), "duplicate key") {
+			ctx.Set("error_message", "Update would create a duplicate")
+			ctx.Status(http.StatusConflict)
+		} else {
+			ctx.Status(http.StatusInternalServerError)
+		}
 		return
 	}
 	defer rows.Close()
@@ -426,7 +519,7 @@ func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 	for rows.Next() {
 		var row T
 		if err := rows.StructScan(&row); err != nil {
-			Log.Errorw("Failed to scan row", "error", err)
+			Log.Error("Failed to scan row", zap.Error(err))
 			ctx.Status(http.StatusInternalServerError)
 			return
 		}
@@ -434,7 +527,7 @@ func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 	}
 
 	if len(results) == 0 {
-		Log.Warn("No records updated for ID", "id", id)
+		Log.Warn("No records updated for ID", zap.String("id", id))
 		ctx.Status(http.StatusNotFound)
 		return
 	}
@@ -442,13 +535,15 @@ func (c *zCore[T]) UpdateHandler(ctx *gin.Context) {
 	for i, result := range results {
 		err = validate.IsValid(result)
 		if err != nil {
-			Log.Errorw("Validation failed for updated record", "error", err, "index", i)
-			ctx.Status(http.StatusBadRequest)
+			Log.Error("Validation failed for updated record", zap.Error(err), zap.Int("index", i))
+			ctx.Set("error_message", "Updated record failed validation")
+			ctx.Status(http.StatusInternalServerError)
 			return
 		}
 	}
 
-	ctx.JSON(http.StatusOK, results[0])
+	// Use scoped serialization for the response
+	RespondWithScopedJSON(ctx, http.StatusOK, results[0])
 }
 
 // DeleteHandler deletes a record by ID.
@@ -456,29 +551,32 @@ func (c *zCore[T]) DeleteHandler(ctx *gin.Context) {
 	db := ctx.MustGet("db").(Database)
 	if db == nil {
 		Log.Error("Database connection is not available")
-		ctx.Status(http.StatusInternalServerError)
+		ctx.Set("error_message", "Database connection is not available")
+		ctx.Status(http.StatusServiceUnavailable)
 		return
 	}
 
 	id := ctx.Param("id")
 	if id == "" {
 		Log.Error("ID parameter is missing")
+		ctx.Set("error_message", "ID parameter is required")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
 	err := validate.IsValidID(id)
 	if err != nil {
-		Log.Errorw("Invalid ID", "error", err, "id", id)
+		Log.Error("Invalid ID", zap.Error(err), zap.String("id", id))
+		ctx.Set("error_message", "Invalid ID format")
 		ctx.Status(http.StatusBadRequest)
 		return
 	}
 
-	Log.Infow("Deleting a record", "model", c.meta.Name, "id", id)
+	Log.Info("Deleting a record", zap.String("model", c.meta.Name), zap.String("id", id))
 
 	_, err = db.Execute(c.contracts["delete"], map[string]any{"id": id})
 	if err != nil {
-		Log.Errorw("Failed to delete record", "error", err)
+		Log.Error("Failed to delete record", zap.Error(err))
 		ctx.Status(http.StatusInternalServerError)
 		return
 	}

@@ -3,6 +3,8 @@ package zbz
 import (
 	"fmt"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 // Macro defines the interface for executing stored SQL queries with parameters
@@ -50,7 +52,7 @@ func NewMacro(name string, template string) Macro {
 
 // Interpolate a query template by replacing placeholders with actual values
 func (q *zMacro) Interpolate(embed map[string]string) (string, error) {
-	Log.Debugw("Interpolating query", "query", q, "embeddings", embed)
+	Log.Debug("Interpolating query", zap.Any("query", q), zap.Any("embeddings", embed))
 
 	// TODO embedded content is raw sql - add some sanitization or validation to mitigate SQL injection risk
 	query := q.Template

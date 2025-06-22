@@ -74,6 +74,16 @@ services:
     networks:
       - dev
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - dev
+
   loki:
     image: grafana/loki:latest
     container_name: loki
@@ -131,15 +141,18 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_HOST: ${POSTGRES_HOST}
       POSTGRES_PORT: ${POSTGRES_PORT}
+      REDIS_URL: redis://redis:6379
     ports:
       - "8080:8080"
     depends_on:
       - db
+      - redis
     networks:
       - dev
 
 volumes:
   postgres-data:
+  redis-data:
   tempo-data:
   api-data:
 

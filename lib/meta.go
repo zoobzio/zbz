@@ -65,6 +65,11 @@ func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
 		t := field.Type.String()
 		st := "text"
 
+		// Skip fields with json:"-" as they should not appear in OpenAPI schemas
+		if j == "-" {
+			continue
+		}
+
 		var exv any
 		switch t {
 		case "zbz.Model":
@@ -120,8 +125,8 @@ func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
 		})
 		if d != "-" {
 			c = append(c, d)
+			ex[d] = exv
 		}
-		ex[d] = exv
 	}
 
 	return f, c, ex
