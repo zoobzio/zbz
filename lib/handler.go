@@ -3,8 +3,7 @@ package zbz
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 )
 
 // Handler provides HTTP handling for Core business logic
@@ -22,7 +21,7 @@ func NewHandler[T BaseModel](core Core) *Handler[T] {
 }
 
 // CreateHandler handles HTTP POST requests for creating new records
-func (h *Handler[T]) CreateHandler(ctx *gin.Context) {
+func (h *Handler[T]) CreateHandler(ctx RequestContext) {
 	result, err := h.core.Create(ctx)
 	if err != nil {
 		h.handleError(ctx, err)
@@ -34,7 +33,7 @@ func (h *Handler[T]) CreateHandler(ctx *gin.Context) {
 }
 
 // ReadHandler handles HTTP GET requests for retrieving records by ID
-func (h *Handler[T]) ReadHandler(ctx *gin.Context) {
+func (h *Handler[T]) ReadHandler(ctx RequestContext) {
 	result, err := h.core.Read(ctx)
 	if err != nil {
 		h.handleError(ctx, err)
@@ -46,7 +45,7 @@ func (h *Handler[T]) ReadHandler(ctx *gin.Context) {
 }
 
 // UpdateHandler handles HTTP PUT requests for updating records by ID
-func (h *Handler[T]) UpdateHandler(ctx *gin.Context) {
+func (h *Handler[T]) UpdateHandler(ctx RequestContext) {
 	result, err := h.core.Update(ctx)
 	if err != nil {
 		h.handleError(ctx, err)
@@ -58,7 +57,7 @@ func (h *Handler[T]) UpdateHandler(ctx *gin.Context) {
 }
 
 // DeleteHandler handles HTTP DELETE requests for removing records by ID
-func (h *Handler[T]) DeleteHandler(ctx *gin.Context) {
+func (h *Handler[T]) DeleteHandler(ctx RequestContext) {
 	err := h.core.Delete(ctx)
 	if err != nil {
 		h.handleError(ctx, err)
@@ -70,8 +69,8 @@ func (h *Handler[T]) DeleteHandler(ctx *gin.Context) {
 }
 
 // handleError centralizes error handling and HTTP response logic
-func (h *Handler[T]) handleError(ctx *gin.Context, err error) {
-	Log.Error("Handler operation failed", zap.Error(err))
+func (h *Handler[T]) handleError(ctx RequestContext, err error) {
+	logger.Log.Error("Handler operation failed", logger.Err(err))
 	
 	// Handle different error types
 	switch {
@@ -145,14 +144,15 @@ func extractValidationErrors(err error) map[string]string {
 
 // respondWithScopedJSON sends a JSON response with field-level scoping
 // Moved from cereal.go to belong to Handler (HTTP response concerns)
-func (h *Handler[T]) respondWithScopedJSON(ctx *gin.Context, status int, data any) {
+func (h *Handler[T]) respondWithScopedJSON(ctx RequestContext, status int, data any) {
 	jsonData, err := SerializeWithScopes(ctx, data, FormatJSON)
 	if err != nil {
-		Log.Error("Failed to serialize response with scopes", zap.Error(err))
+		logger.Log.Error("Failed to serialize response with scopes", logger.Err(err))
 		ctx.Set("error_message", "Failed to serialize response")
 		ctx.Status(http.StatusInternalServerError)
 		return
 	}
 
-	ctx.Data(status, "application/json", jsonData)
+	ctx.Status(status)
+	ctx.Data("application/json", jsonData)
 }

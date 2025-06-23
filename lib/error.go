@@ -4,7 +4,7 @@ import (
 	"net/http"
 	
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 )
 
 // ErrorResponse represents a standardized error response structure
@@ -233,9 +233,9 @@ func RespondWithValidationError(ctx *gin.Context, validationErrors ValidationErr
 	}
 	
 	// Log validation failure with details
-	Log.Info("Request validation failed",
-		zap.Int("error_count", len(validationErrors.Errors)),
-		zap.Any("field_errors", fieldErrors))
+	logger.Log.Info("Request validation failed",
+		logger.Any("validation_errors", validationErrors),
+		logger.Any("field_errors", fieldErrors))
 	
 	ctx.JSON(http.StatusUnprocessableEntity, response)
 }
@@ -259,9 +259,8 @@ func RespondWithValidationFieldError(ctx *gin.Context, fieldErrors map[string]st
 		Details: validationErrors,
 	}
 	
-	Log.Info("Request validation failed",
-		zap.Int("error_count", len(fieldErrors)),
-		zap.Any("field_errors", fieldErrors))
+	logger.Log.Info("Request validation failed",
+		logger.Any("field_errors", fieldErrors))
 	
 	ctx.JSON(http.StatusUnprocessableEntity, response)
 }

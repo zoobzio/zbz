@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 )
 
 // Macro defines the interface for executing stored SQL queries with parameters
@@ -12,32 +12,6 @@ type Macro interface {
 	Interpolate(embed MacroEmbeds) (string, error)
 }
 
-// TrustedSQLIdentifier represents a SQL identifier that has been validated
-// Can only be created through validation functions, preventing SQL injection
-type TrustedSQLIdentifier struct {
-	value string
-}
-
-// String returns the validated SQL identifier value
-func (t TrustedSQLIdentifier) String() string {
-	return t.value
-}
-
-// MacroEmbeds holds validated SQL identifiers for macro interpolation
-// Prevents user input from reaching raw SQL interpolation
-type MacroEmbeds struct {
-	Table   TrustedSQLIdentifier  // Table name: "users"
-	Columns TrustedSQLIdentifier  // Column list: "id, name, email"
-	Values  TrustedSQLIdentifier  // Named params: ":id, :name, :email"
-	Updates TrustedSQLIdentifier  // Update assignments: "name = :name, email = :email"
-}
-
-// MacroContract defines the necessary data to implement a macro as a query
-type MacroContract struct {
-	Name  string
-	Macro string
-	Embed MacroEmbeds
-}
 
 // zMacro represents a SQL query with its metadata
 type zMacro struct {
@@ -72,7 +46,7 @@ func NewMacro(name string, template string) Macro {
 
 // Interpolate a query template by replacing placeholders with validated values
 func (q *zMacro) Interpolate(embed MacroEmbeds) (string, error) {
-	Log.Debug("Interpolating query with trusted values", zap.String("query_name", q.Name))
+	logger.Log.Debug("Interpolating query with trusted values", logger.Any("query", q))
 
 	query := q.Template
 	

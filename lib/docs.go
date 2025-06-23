@@ -7,20 +7,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 	"gopkg.in/yaml.v3"
 )
 
 // Docs is an interface for API documentation functionality
 type Docs interface {
 	AddTag(name, description string)
-	AddPath(op *Operation, errorManager ErrorManager)
+	AddPath(contract *HandlerContract, errorManager ErrorManager)
 	AddParameter(param *OpenAPIParameter)
 	AddSchema(meta *Meta)
 
-	SpecHandler(ctx *gin.Context)
-	ScalarHandler(ctx *gin.Context)
+	SpecHandler(ctx RequestContext)
+	ScalarHandler(ctx RequestContext)
 }
 
 // Docs represents the documentation structure for an API
@@ -83,29 +82,29 @@ func (d *zDocs) AddBody(name string, body *OpenAPIRequestBody) {
 }
 
 // AddPath adds a new path to the OpenAPI specification
-func (d *zDocs) AddPath(op *Operation, errorManager ErrorManager) {
-	if d.spec.Paths[op.Path] == nil {
-		d.spec.Paths[op.Path] = make(map[string]*OpenAPIPath)
+func (d *zDocs) AddPath(contract *HandlerContract, errorManager ErrorManager) {
+	if d.spec.Paths[contract.Path] == nil {
+		d.spec.Paths[contract.Path] = make(map[string]*OpenAPIPath)
 	}
 
 	responses := make(map[int]*OpenAPIResponse)
-	if op.Response != nil {
-		responses[op.Response.Status] = &OpenAPIResponse{
-			Description: http.StatusText(op.Response.Status),
+	if contract.Response != nil {
+		responses[contract.Response.Status] = &OpenAPIResponse{
+			Description: http.StatusText(contract.Response.Status),
 		}
 
-		if op.Response.Ref != "" {
-			responses[op.Response.Status].Content = &OpenAPIContent{
+		if contract.Response.Ref != "" {
+			responses[contract.Response.Status].Content = &OpenAPIContent{
 				ApplicationJSON: &OpenAPIApplicationJSON{
 					Schema: &OpenAPISchema{
-						Ref: fmt.Sprintf("#/components/schemas/%s", op.Response.Ref),
+						Ref: fmt.Sprintf("#/components/schemas/%s", contract.Response.Ref),
 					},
 				},
 			}
 		}
 
-		if op.Response.Errors != nil {
-			for _, status := range op.Response.Errors {
+		if contract.Response.Errors != nil {
+			for _, status := range contract.Response.Errors {
 				errorSchema := GetErrorSchema(errorManager, status)
 				if errorSchema != nil {
 					responses[status] = &OpenAPIResponse{
@@ -124,7 +123,7 @@ func (d *zDocs) AddPath(op *Operation, errorManager ErrorManager) {
 			}
 		}
 
-		if op.Auth {
+		if contract.Auth {
 			unauthorizedSchema := GetErrorSchema(errorManager, http.StatusUnauthorized)
 			if unauthorizedSchema != nil {
 				responses[http.StatusUnauthorized] = &OpenAPIResponse{
@@ -164,42 +163,42 @@ func (d *zDocs) AddPath(op *Operation, errorManager ErrorManager) {
 	}
 
 	path := &OpenAPIPath{
-		Summary:     op.Name,
-		Description: op.Description,
-		OperationId: op.Name,
-		Tags:        []string{op.Tag},
+		Summary:     contract.Name,
+		Description: contract.Description,
+		OperationId: contract.Name,
+		Tags:        []string{contract.Tag},
 		Parameters:  []*OpenAPIRef{},
 		Responses:   responses,
 	}
 
-	if op.Auth {
+	if contract.Auth {
 		path.Security = []map[string][]string{
 			{"Bearer": {}},
 		}
 	}
 
-	if op.Parameters != nil {
-		for _, param := range op.Parameters {
+	if contract.Parameters != nil {
+		for _, param := range contract.Parameters {
 			path.Parameters = append(path.Parameters, &OpenAPIRef{
 				Ref: fmt.Sprintf("#/components/parameters/%s", param),
 			})
 		}
 	}
 
-	if op.RequestBody != "" {
+	if contract.RequestBody != "" {
 		path.RequestBody = &OpenAPIRequestBody{
-			Ref: fmt.Sprintf("#/components/requestBodies/%s", op.RequestBody),
+			Ref: fmt.Sprintf("#/components/requestBodies/%s", contract.RequestBody),
 		}
 	}
 
-	d.spec.Paths[op.Path][strings.ToLower(op.Method)] = path
+	d.spec.Paths[contract.Path][strings.ToLower(contract.Method)] = path
 }
 
 // AddSchema adds a new schema to the OpenAPI specification
 func (d *zDocs) AddSchema(meta *Meta) {
 	example, err := json.Marshal(meta.ExampleValue)
 	if err != nil {
-		Log.Fatal("Failed to marshal example for model", zap.Any("meta", meta), zap.Error(err))
+		logger.Log.Fatal("Failed to marshal example for model", logger.Any("meta", meta), logger.Err(err))
 	}
 
 	schema := &OpenAPISchema{
@@ -557,14 +556,14 @@ func (d *zDocs) getOpenAPIConstraints(parsed ParsedValidationRules) map[string]a
 func (d *zDocs) GenerateYAML(spec *OpenAPISpec) {
 	data, err := yaml.Marshal(spec)
 	if err != nil {
-		Log.Fatal("failed to marshal OpenAPI spec to YAML", zap.Error(err))
+		logger.Log.Fatal("failed to marshal OpenAPI spec to YAML", logger.Err(err))
 	}
 	d.yaml = data
 }
 
 // SpecHandler generates and returns the OpenAPI specification in YAML format
 // Shows full schema for admins, scoped schema for regular users
-func (d *zDocs) SpecHandler(ctx *gin.Context) {
+func (d *zDocs) SpecHandler(ctx RequestContext) {
 	// Get user permissions from context
 	permissions, exists := ctx.Get("permissions")
 	if !exists {
@@ -582,27 +581,30 @@ func (d *zDocs) SpecHandler(ctx *gin.Context) {
 		if d.yaml == nil {
 			d.GenerateYAML(d.spec)
 		}
-		ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", d.yaml)
+		ctx.Status(http.StatusOK)
+		ctx.Data("text/yaml; charset=utf-8", d.yaml)
 	} else {
 		// Return scoped schema for regular users
 		scopedSpec := d.filterSpecByPermissions(d.spec, userPerms)
 		
 		data, err := yaml.Marshal(scopedSpec)
 		if err != nil {
-			Log.Error("Failed to marshal scoped OpenAPI spec to YAML", zap.Error(err))
+			logger.Log.Error("Failed to marshal scoped OpenAPI spec to YAML", logger.Err(err))
 			ctx.Status(http.StatusInternalServerError)
 			return
 		}
 		
-		ctx.Data(http.StatusOK, "text/yaml; charset=utf-8", data)
+		ctx.Status(http.StatusOK)
+		ctx.Data("text/yaml; charset=utf-8", data)
 	}
 }
 
 // ScalarHandler renders a documentation site built using Scalar: https://scalar.com/
 // Shows full docs for admins, scoped docs for regular users
-func (d *zDocs) ScalarHandler(ctx *gin.Context) {
-	ctx.HTML(http.StatusOK, "scalar.tmpl", gin.H{
-		"title":   config.Title(),
+func (d *zDocs) ScalarHandler(ctx RequestContext) {
+	ctx.Status(http.StatusOK)
+	ctx.HTML("scalar.tmpl", map[string]any{
+		"title":   GetConfig().Title(),
 		"openapi": "/openapi", // Always points to the same endpoint, but it returns different content based on user permissions
 	})
 }

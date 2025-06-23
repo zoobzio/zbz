@@ -3,7 +3,18 @@ package contracts
 import (
 	"zbz/cmd/example/internal/models"
 	"zbz/lib"
+	"zbz/lib/database"
+	"zbz/shared/logger"
 )
+
+// createPrimaryDatabaseDriver creates the PostgreSQL driver for the primary database
+func createPrimaryDatabaseDriver() zbz.DatabaseDriver {
+	driver, err := database.NewPostgreSQLDriver(zbz.GetConfig().DSN())
+	if err != nil {
+		logger.Fatal("Failed to create PostgreSQL driver", logger.Err(err))
+	}
+	return driver
+}
 
 // PrimaryDatabase is the shared database contract that all cores can reference
 var PrimaryDatabase = zbz.DatabaseContract{
@@ -11,20 +22,21 @@ var PrimaryDatabase = zbz.DatabaseContract{
 		Name:        "primary",
 		Description: "Primary application database for all core business data",
 	},
-	Key:    "primary",
-	Driver: "postgres",
-	DSN:    zbz.GetConfig().DSN(), // Use config DSN until we implement encrypted config contracts
+	Driver: createPrimaryDatabaseDriver(), // User-initialized PostgreSQL driver
 }
 
-// UserContract defines the contract for built-in user management
-var UserContract = zbz.CoreContract[zbz.User]{
+// HTTPContract defines the HTTP service configuration
+var HTTPContract = zbz.HTTPContract{
 	BaseContract: zbz.BaseContract{
-		Name:        "User",
-		Description: "Built-in user management for authentication and profile operations",
+		Name:        "primary",
+		Description: "Primary HTTP server for the application",
 	},
-	DatabaseContract: PrimaryDatabase,
-	Handlers: []string{"Get", "Update"}, // Only allow read and update operations
+	Driver:   "default", // Will use default implementation for now
+	Port:     "8080",
+	Host:     "0.0.0.0",
+	DevMode:  true,
 }
+
 
 // ContactContract defines the contract for contact management
 var ContactContract = zbz.CoreContract[models.Contact]{

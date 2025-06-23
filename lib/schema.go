@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -137,7 +136,12 @@ type NLQHints struct {
 type Schema interface {
 	AddMeta(meta *Meta)
 	GenerateDocument() *DatabaseSchemaDocument
-	SchemaHandler(ctx *gin.Context)
+	
+	// Framework-agnostic schema handler
+	SchemaHandler(ctx RequestContext)
+	
+	// Handler contract for engine to collect
+	SchemaContract(databaseKey string) *HandlerContract
 	
 	// Validation methods for SQL macro safety
 	IsValidTable(name string) bool
@@ -160,7 +164,8 @@ func NewSchema() Schema {
 
 // AddMeta registers a model's metadata for schema generation
 func (s *zSchema) AddMeta(meta *Meta) {
-	Log.Debug("Adding meta to schema", zap.String("model", meta.Name))
+	logger.Log.Debug("Adding meta to schema",
+		logger.Any("meta", meta))
 	s.metas = append(s.metas, *meta)
 	// Invalidate cached schema so it gets regenerated with new meta
 	s.schema = nil
@@ -377,21 +382,45 @@ func (s *zSchema) generateNLQHints(tables map[string]*TableSchema) *NLQHints {
 }
 
 // SchemaHandler serves the database schema document as YAML for browser display
-func (s *zSchema) SchemaHandler(ctx *gin.Context) {
+func (s *zSchema) SchemaHandler(ctx RequestContext) {
 	if s.schema == nil {
 		s.GenerateDocument()
 	}
 
 	yamlData, err := yaml.Marshal(s.schema)
 	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Failed to generate YAML schema")
+		ctx.Set("error_message", "Failed to generate YAML schema")
+		ctx.Status(http.StatusInternalServerError)
 		return
 	}
 
 	// Use text/plain to display in browser instead of downloading
-	ctx.Header("Content-Type", "text/plain; charset=utf-8")
-	ctx.Header("Cache-Control", "public, max-age=3600") // Cache for 1 hour
-	ctx.String(http.StatusOK, string(yamlData))
+	ctx.SetHeader("Content-Type", "text/plain; charset=utf-8")
+	ctx.SetHeader("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+	ctx.Status(http.StatusOK)
+	ctx.Data("text/plain; charset=utf-8", yamlData)
+}
+
+// SchemaContract returns the handler contract for schema endpoint
+func (s *zSchema) SchemaContract(databaseKey string) *HandlerContract {
+	path := "/schema"
+	name := "Get Default Schema"
+	description := "Get default database schema"
+	
+	if databaseKey != "primary" && databaseKey != "" {
+		path = fmt.Sprintf("/schema/%s", databaseKey)
+		name = fmt.Sprintf("Get %s Schema", databaseKey)
+		description = fmt.Sprintf("Get database schema for %s", databaseKey)
+	}
+	
+	return &HandlerContract{
+		Name:        name,
+		Description: description,
+		Method:      "GET",
+		Path:        path,
+		Handler:     s.SchemaHandler,
+		Auth:        false, // Schema is public for introspection
+	}
 }
 
 // Helper functions for parsing validation rules
@@ -414,11 +443,12 @@ func (s *zSchema) IsValidTable(name string) bool {
 	// Always generate fresh schema to avoid caching issues
 	s.GenerateDocument()
 	
-	Log.Debug("Checking table validity", 
-		zap.String("table", name),
-		zap.Int("total_metas", len(s.metas)),
-		zap.Int("total_tables", len(s.schema.Tables)),
-		zap.Strings("available_tables", s.getTableNames()))
+	logger.Log.Debug("Checking table validity", 
+		logger.String("table", name),
+		logger.Int("total_metas", len(s.metas)),
+		logger.Int("total_tables", len(s.schema.Tables)),
+		logger.Strings("available_tables", s.getTableNames()),
+		logger.Any("schema_metas", s.metas))
 	
 	_, exists := s.schema.Tables[strings.ToLower(name)]
 	return exists

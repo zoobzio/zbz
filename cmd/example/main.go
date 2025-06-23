@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 
-	"go.uber.org/zap"
 	"zbz/cmd/example/internal/contracts"
 	"zbz/lib"
+	"zbz/shared/logger"
 )
 
 func main() {
@@ -13,14 +13,17 @@ func main() {
 
 	_, _, err := zbz.InitTelemetry(ctx, "zbz")
 	if err != nil {
-		zbz.Log.Fatal("Failed to initialize tracer", zap.Error(err))
+		logger.Log.Fatal("Failed to initialize tracer", logger.Err(err))
 	}
 
 	e := zbz.NewEngine()
 
-	// Inject contracts directly - they handle their own setup including database creation
+	// Set up providers first
+	e.SetHTTP(&contracts.HTTPContract)
+	e.SetDatabase(&contracts.PrimaryDatabase)
+
+	// Inject core contracts - they handle their own setup including database creation
 	e.Inject(
-		contracts.UserContract,
 		contracts.ContactContract,
 		contracts.CompanyContract,
 		contracts.FormContract,
@@ -28,5 +31,5 @@ func main() {
 		contracts.FieldContract,
 	)
 
-	e.Start()
+	e.Start(":8080")
 }

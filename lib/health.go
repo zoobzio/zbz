@@ -1,12 +1,17 @@
 package zbz
 
 import (
-	"github.com/gin-gonic/gin"
+	"net/http"
+	"zbz/shared/logger"
 )
 
 // Health is an interface for the health check functionality
 type Health interface {
-	HealthCheckHandler(c *gin.Context)
+	// Framework-agnostic health check handler
+	HealthCheckHandler(ctx RequestContext)
+	
+	// Handler contract for engine to collect
+	HealthCheckContract() *HandlerContract
 }
 
 // zHealth implements the Health interface
@@ -18,10 +23,23 @@ func NewHealth() Health {
 }
 
 // HealthCheckHandler handles the health check endpoint
-func (h *zHealth) HealthCheckHandler(c *gin.Context) {
-	Log.Info("Checking service integrity...")
-	c.JSON(200, gin.H{
+func (h *zHealth) HealthCheckHandler(ctx RequestContext) {
+	logger.Log.Info("Checking service integrity...")
+	ctx.Status(http.StatusOK)
+	ctx.JSON(map[string]any{
 		"status":  "healthy",
 		"message": "The service is running smoothly.",
 	})
+}
+
+// HealthCheckContract returns the handler contract for health check endpoint
+func (h *zHealth) HealthCheckContract() *HandlerContract {
+	return &HandlerContract{
+		Name:        "Health Check",
+		Description: "System health status",
+		Method:      "GET",
+		Path:        "/health",
+		Handler:     h.HealthCheckHandler,
+		Auth:        false,
+	}
 }

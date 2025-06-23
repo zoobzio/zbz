@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 )
 
 // Meta defines the metadata for a core resource, including its name, description, and example.
@@ -55,9 +55,9 @@ type Meta struct {
 
 // extractFields extracts fields from a given type and returns metadata about them.
 func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any) {
-	Log.Debug("Extracting fields from type", 
-		zap.String("type_name", reflectType.Name()),
-		zap.Int("field_count", reflectType.NumField()))
+	logger.Log.Debug("Extracting fields from type", 
+		logger.String("type_name", reflectType.Name()),
+		logger.Int("field_count", reflectType.NumField()))
 
 	fieldMetas := make([]*Meta, 0, reflectType.NumField())
 	columnNames := []string{}
@@ -78,15 +78,15 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		goFieldType := field.Type.String()
 		sqlColumnType := "text" // default
 
-		Log.Debug("Processing field", 
-			zap.String("field_name", fieldName),
-			zap.String("go_type", goFieldType),
-			zap.String("db_column", dbColumnName),
-			zap.String("json_name", jsonFieldName))
+		logger.Log.Debug("Processing field", 
+			logger.String("field_name", fieldName),
+			logger.String("go_type", goFieldType),
+			logger.String("db_column", dbColumnName),
+			logger.String("json_name", jsonFieldName))
 
 		// Skip fields with json:"-" as they should not appear in OpenAPI schemas
 		if jsonFieldName == "-" {
-			Log.Debug("Skipping field with json:\"-\"", zap.String("field", fieldName))
+			logger.Log.Debug("Skipping field with json:\"-\"", logger.String("field", fieldName))
 			continue
 		}
 
@@ -94,15 +94,15 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		switch goFieldType {
 		case "zbz.Model":
 			// Skip the base model fields, these are handled separately
-			Log.Debug("Skipping embedded Model field", zap.String("field", fieldName))
+			logger.Log.Debug("Skipping embedded Model field", logger.String("field", fieldName))
 			continue
 		case "int", "int32":
 			if exampleValue != "" {
 				if parsed, err := strconv.Atoi(exampleValue); err != nil {
-					Log.Warn("Failed to parse int example value", 
-						zap.String("field", fieldName),
-						zap.String("example", exampleValue),
-						zap.Error(err))
+					logger.Log.Warn("Failed to parse int example value", 
+						logger.String("field", fieldName),
+						logger.String("example", exampleValue),
+						logger.Err(err))
 					parsedExample = 0
 				} else {
 					parsedExample = parsed
@@ -114,10 +114,10 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		case "int64":
 			if exampleValue != "" {
 				if parsed, err := strconv.ParseInt(exampleValue, 10, 64); err != nil {
-					Log.Warn("Failed to parse int64 example value", 
-						zap.String("field", fieldName),
-						zap.String("example", exampleValue),
-						zap.Error(err))
+					logger.Log.Warn("Failed to parse int64 example value", 
+						logger.String("field", fieldName),
+						logger.String("example", exampleValue),
+						logger.Err(err))
 					parsedExample = int64(0)
 				} else {
 					parsedExample = parsed
@@ -129,10 +129,10 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		case "float32":
 			if exampleValue != "" {
 				if parsed, err := strconv.ParseFloat(exampleValue, 32); err != nil {
-					Log.Warn("Failed to parse float32 example value", 
-						zap.String("field", fieldName),
-						zap.String("example", exampleValue),
-						zap.Error(err))
+					logger.Log.Warn("Failed to parse float32 example value", 
+						logger.String("field", fieldName),
+						logger.String("example", exampleValue),
+						logger.Err(err))
 					parsedExample = float32(0)
 				} else {
 					parsedExample = float32(parsed)
@@ -144,10 +144,10 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		case "float64":
 			if exampleValue != "" {
 				if parsed, err := strconv.ParseFloat(exampleValue, 64); err != nil {
-					Log.Warn("Failed to parse float64 example value", 
-						zap.String("field", fieldName),
-						zap.String("example", exampleValue),
-						zap.Error(err))
+					logger.Log.Warn("Failed to parse float64 example value", 
+						logger.String("field", fieldName),
+						logger.String("example", exampleValue),
+						logger.Err(err))
 					parsedExample = float64(0)
 				} else {
 					parsedExample = parsed
@@ -162,10 +162,10 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		case "bool":
 			if exampleValue != "" {
 				if parsed, err := strconv.ParseBool(exampleValue); err != nil {
-					Log.Warn("Failed to parse bool example value", 
-						zap.String("field", fieldName),
-						zap.String("example", exampleValue),
-						zap.Error(err))
+					logger.Log.Warn("Failed to parse bool example value", 
+						logger.String("field", fieldName),
+						logger.String("example", exampleValue),
+						logger.Err(err))
 					parsedExample = false
 				} else {
 					parsedExample = parsed
@@ -177,10 +177,10 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 		case "time.Time":
 			if exampleValue != "" {
 				if parsed, err := time.Parse(time.RFC3339, exampleValue); err != nil {
-					Log.Warn("Failed to parse time.Time example value", 
-						zap.String("field", fieldName),
-						zap.String("example", exampleValue),
-						zap.Error(err))
+					logger.Log.Warn("Failed to parse time.Time example value", 
+						logger.String("field", fieldName),
+						logger.String("example", exampleValue),
+						logger.Err(err))
 					parsedExample = time.Time{}
 				} else {
 					parsedExample = parsed
@@ -193,9 +193,9 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 			parsedExample = []byte(exampleValue)
 			sqlColumnType = "bytea"
 		default:
-			Log.Warn("Unknown Go type encountered during field extraction", 
-				zap.String("field", fieldName),
-				zap.String("go_type", goFieldType))
+			logger.Log.Warn("Unknown Go type encountered during field extraction", 
+				logger.String("field", fieldName),
+				logger.String("go_type", goFieldType))
 			parsedExample = exampleValue
 		}
 
@@ -220,16 +220,16 @@ func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any)
 			exampleValues[dbColumnName] = parsedExample
 		}
 
-		Log.Debug("Successfully processed field", 
-			zap.String("field", fieldName),
-			zap.String("sql_type", sqlColumnType),
-			zap.Bool("required", fieldMeta.IsRequired))
+		logger.Log.Debug("Successfully processed field", 
+			logger.String("field", fieldName),
+			logger.String("sql_type", sqlColumnType),
+			logger.Bool("required", fieldMeta.IsRequired))
 	}
 
-	Log.Debug("Field extraction complete", 
-		zap.String("type", reflectType.Name()),
-		zap.Int("extracted_fields", len(fieldMetas)),
-		zap.Int("db_columns", len(columnNames)))
+	logger.Log.Debug("Field extraction complete", 
+		logger.String("type", reflectType.Name()),
+		logger.Int("extracted_fields", len(fieldMetas)),
+		logger.Int("db_columns", len(columnNames)))
 
 	return fieldMetas, columnNames, exampleValues
 }
@@ -243,13 +243,13 @@ func extractMeta[T BaseModel](description string) *Meta {
 	baseModelType := reflect.TypeOf(baseModel)
 
 	if modelType == nil {
-		Log.Error("Cannot extract meta from nil type")
+		logger.Log.Error("Cannot extract meta from nil type")
 		return nil
 	}
 
-	Log.Info("Starting meta extraction for model", 
-		zap.String("model_name", modelType.Name()),
-		zap.String("description", description))
+	logger.Log.Info("Starting meta extraction for model", 
+		logger.String("model_name", modelType.Name()),
+		logger.String("description", description))
 
 	tableMeta := &Meta{
 		Name:          modelType.Name(),
@@ -259,11 +259,11 @@ func extractMeta[T BaseModel](description string) *Meta {
 	}
 
 	// Extract fields from the model type
-	Log.Debug("Extracting fields from custom model type", zap.String("type", modelType.Name()))
+	logger.Log.Debug("Extracting fields from custom model type", logger.String("type", modelType.Name()))
 	modelFields, modelColumns, modelExamples := extractFields(modelType)
 	
 	// Extract fields from the base Model type  
-	Log.Debug("Extracting fields from base Model type")
+	logger.Log.Debug("Extracting fields from base Model type")
 	baseFields, baseColumns, baseExamples := extractFields(baseModelType)
 
 	// Combine model and base fields
@@ -279,11 +279,11 @@ func extractMeta[T BaseModel](description string) *Meta {
 	maps.Copy(combinedExamples, baseExamples)
 	tableMeta.ExampleValue = combinedExamples
 
-	Log.Info("Meta extraction completed", 
-		zap.String("model_name", modelType.Name()),
-		zap.Int("total_fields", len(tableMeta.FieldMetadata)),
-		zap.Int("total_columns", len(tableMeta.ColumnNames)),
-		zap.Int("example_values", len(combinedExamples)))
+	logger.Log.Info("Meta extraction completed", 
+		logger.String("model_name", modelType.Name()),
+		logger.Int("total_fields", len(tableMeta.FieldMetadata)),
+		logger.Int("total_columns", len(tableMeta.ColumnNames)),
+		logger.Int("example_values", len(combinedExamples)))
 
 	return tableMeta
 }

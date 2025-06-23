@@ -239,7 +239,7 @@ http.SetErrorResponse(http.StatusNotFound, customError)
 The framework uses SQL macros for type-safe queries:
 
 ```sql
--- lib/macros/find_users_by_email.sqlx
+-- internal/macros/find_users_by_email.sqlx
 -- @embed email The email to search for
 SELECT {{columns}} FROM users WHERE email = :email;
 ```

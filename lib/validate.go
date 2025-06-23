@@ -7,7 +7,7 @@ import (
 	"unicode"
 
 	"github.com/go-playground/validator/v10"
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 )
 
 // ValidationRule represents a single validation rule with its parameters
@@ -153,9 +153,8 @@ func (v *zValidate) convertValidationErrors(err error) error {
 			})
 		}
 		
-		Log.Debug("Validation failed",
-			zap.Int("error_count", len(errors)),
-			zap.Any("errors", errors))
+		logger.Log.Debug("Validation failed",
+			logger.Any("errors", errors))
 		
 		return ValidationErrors{Errors: errors}
 	}

@@ -7,8 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"zbz/shared/logger"
 )
 
 // Cereal handles field-level scoped serialization and deserialization
@@ -274,7 +273,7 @@ func GetCereal() Cereal {
 }
 
 // SerializeWithScopes is a convenience function for scoped serialization
-func SerializeWithScopes(ctx *gin.Context, data any, format SerializationFormat) ([]byte, error) {
+func SerializeWithScopes(ctx RequestContext, data any, format SerializationFormat) ([]byte, error) {
 	// Get user permissions from context
 	permissions, exists := ctx.Get("permissions")
 	if !exists {
@@ -297,7 +296,7 @@ func SerializeWithScopes(ctx *gin.Context, data any, format SerializationFormat)
 }
 
 // DeserializeWithScopes is a convenience function for scoped deserialization
-func DeserializeWithScopes(ctx *gin.Context, jsonData []byte, target any, operation string) error {
+func DeserializeWithScopes(ctx RequestContext, jsonData []byte, target any, operation string) error {
 	// Get user permissions from context
 	permissions, exists := ctx.Get("permissions")
 	if !exists {
@@ -313,16 +312,17 @@ func DeserializeWithScopes(ctx *gin.Context, jsonData []byte, target any, operat
 }
 
 // RespondWithScopedJSON sends a JSON response with field-level scoping
-func RespondWithScopedJSON(ctx *gin.Context, status int, data any) {
+func RespondWithScopedJSON(ctx RequestContext, status int, data any) {
 	jsonData, err := SerializeWithScopes(ctx, data, FormatJSON)
 	if err != nil {
-		Log.Error("Failed to serialize response with scopes", zap.Error(err))
+		logger.Log.Error("Failed to serialize response with scopes", logger.Err(err))
 		ctx.Set("error_message", "Failed to serialize response")
 		ctx.Status(http.StatusInternalServerError)
 		return
 	}
 
-	ctx.Data(status, "application/json", jsonData)
+	ctx.Status(status)
+	ctx.Data("application/json", jsonData)
 }
 
 // Initialize cereal instance
