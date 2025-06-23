@@ -228,7 +228,7 @@ func (a *zAuth) cacheUserData(auth0ID string, userData *Auth0UserData, ttl time.
 }
 
 // createOrUpdateUser creates or updates a user using the Core system
-func (a *zAuth) createOrUpdateUser(db Database, userData *Auth0UserData) (*User, error) {
+func (a *zAuth) createOrUpdateUser(userData *Auth0UserData) (*User, error) {
 	// For now, just create a user object with the auth data
 	// TODO: Implement proper user lookup and creation using Core operations
 	user := &User{
@@ -287,7 +287,7 @@ func (a *zAuth) TokenMiddleware() gin.HandlerFunc {
 		}
 
 		// Get database connection
-		db, exists := ctx.Get("db")
+		_, exists := ctx.Get("db")
 		if !exists {
 			Log.Error("Database connection not available in context")
 			ctx.Set("error_message", "Database connection unavailable")
@@ -296,7 +296,7 @@ func (a *zAuth) TokenMiddleware() gin.HandlerFunc {
 		}
 
 		// Create or update user in database
-		user, err := a.createOrUpdateUser(db.(Database), userData)
+		user, err := a.createOrUpdateUser(userData)
 		if err != nil {
 			Log.Error("Failed to create/update user", zap.Error(err))
 			ctx.Set("error_message", "Failed to process user data")

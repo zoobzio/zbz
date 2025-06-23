@@ -9,14 +9,34 @@ import (
 
 // Macro defines the interface for executing stored SQL queries with parameters
 type Macro interface {
-	Interpolate(embed map[string]string) (string, error)
+	Interpolate(embed MacroEmbeds) (string, error)
+}
+
+// TrustedSQLIdentifier represents a SQL identifier that has been validated
+// Can only be created through validation functions, preventing SQL injection
+type TrustedSQLIdentifier struct {
+	value string
+}
+
+// String returns the validated SQL identifier value
+func (t TrustedSQLIdentifier) String() string {
+	return t.value
+}
+
+// MacroEmbeds holds validated SQL identifiers for macro interpolation
+// Prevents user input from reaching raw SQL interpolation
+type MacroEmbeds struct {
+	Table   TrustedSQLIdentifier  // Table name: "users"
+	Columns TrustedSQLIdentifier  // Column list: "id, name, email"
+	Values  TrustedSQLIdentifier  // Named params: ":id, :name, :email"
+	Updates TrustedSQLIdentifier  // Update assignments: "name = :name, email = :email"
 }
 
 // MacroContract defines the necessary data to implement a macro as a query
 type MacroContract struct {
 	Name  string
 	Macro string
-	Embed map[string]string
+	Embed MacroEmbeds
 }
 
 // zMacro represents a SQL query with its metadata
@@ -50,23 +70,75 @@ func NewMacro(name string, template string) Macro {
 	}
 }
 
-// Interpolate a query template by replacing placeholders with actual values
-func (q *zMacro) Interpolate(embed map[string]string) (string, error) {
-	Log.Debug("Interpolating query", zap.Any("query", q), zap.Any("embeddings", embed))
+// Interpolate a query template by replacing placeholders with validated values
+func (q *zMacro) Interpolate(embed MacroEmbeds) (string, error) {
+	Log.Debug("Interpolating query with trusted values", zap.String("query_name", q.Name))
 
-	// TODO embedded content is raw sql - add some sanitization or validation to mitigate SQL injection risk
 	query := q.Template
+	
+	// Map of known embeddings to their values from the MacroEmbeds struct
+	embedMap := map[string]string{
+		"table":   embed.Table.String(),
+		"columns": embed.Columns.String(),
+		"values":  embed.Values.String(),
+		"updates": embed.Updates.String(),
+	}
+
 	for _, property := range q.Embeddings {
-		if value, ok := embed[property]; ok {
+		if value, ok := embedMap[property]; ok {
 			placeholder := fmt.Sprintf("{{%s}}", property)
 			if !strings.Contains(query, placeholder) {
 				return "", fmt.Errorf("placeholder %s not found in query template", placeholder)
 			}
+			// Safe to interpolate - value is validated through TrustedSQLIdentifier
 			query = strings.ReplaceAll(query, placeholder, value)
 		} else {
-			return "", fmt.Errorf("missing embedding value for `%s`", property)
+			return "", fmt.Errorf("missing trusted embedding value for `%s`", property)
 		}
 	}
 
 	return query, nil
+}
+
+// BuildMacroEmbeds creates all embeddings from meta columns with schema validation
+func BuildMacroEmbeds(schema Schema, meta *Meta) (MacroEmbeds, error) {
+	tableName := strings.ToLower(meta.Name)
+	
+	// Validate table exists in schema
+	if !schema.IsValidTable(tableName) {
+		return MacroEmbeds{}, fmt.Errorf("table not found in schema: %s", tableName)
+	}
+	
+	// Build table identifier
+	table := TrustedSQLIdentifier{value: tableName}
+	
+	// Build columns: "id, name, email"
+	columnList := strings.Join(meta.ColumnNames, ", ")
+	if !schema.IsValidColumns(tableName, meta.ColumnNames) {
+		return MacroEmbeds{}, fmt.Errorf("invalid columns for table %s: %s", tableName, columnList)
+	}
+	columns := TrustedSQLIdentifier{value: columnList}
+	
+	// Build values: ":id, :name, :email" (always safe for prepared statements)
+	values := make([]string, len(meta.ColumnNames))
+	for i, col := range meta.ColumnNames {
+		values[i] = ":" + col
+	}
+	valueList := TrustedSQLIdentifier{value: strings.Join(values, ", ")}
+	
+	// Build updates: "name = :name, email = :email" (skip id)
+	updates := make([]string, 0, len(meta.ColumnNames)-1)
+	for _, col := range meta.ColumnNames {
+		if col != "id" {
+			updates = append(updates, fmt.Sprintf("%s = :%s", col, col))
+		}
+	}
+	updateList := TrustedSQLIdentifier{value: strings.Join(updates, ", ")}
+	
+	return MacroEmbeds{
+		Table:   table,
+		Columns: columns,
+		Values:  valueList,
+		Updates: updateList,
+	}, nil
 }

@@ -6,163 +6,284 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // Meta defines the metadata for a core resource, including its name, description, and example.
+// This struct serves dual purpose: table-level metadata (when Name is set) and field-level metadata.
 type Meta struct {
-	// Name is the name of the model which is derived from the type name.
+	// Name is the table/model name (for table-level metadata) or Go field name (for field-level metadata)
 	Name string
 
-	// SourceName is the database column name
-	SourceName string
+	// DatabaseColumnName is the database column name (from `db` tag)
+	DatabaseColumnName string
 
-	// DstName is the name of the field after it has been serialized to JSON
-	DstName string
+	// JSONFieldName is the JSON field name after serialization (from `json` tag)
+	JSONFieldName string
 
-	// Description provides a human-readable description of the field
+	// Description provides a human-readable description
 	Description string
 
-	// Type is the Go type of the field, such as int, string, time.Time, etc.
-	Type string
+	// GoType is the Go type of the field, such as int, string, time.Time, etc.
+	GoType string
 
-	// SourceType is the data type of the field as it related to the database
-	SourceType string
+	// DatabaseType is the SQL data type for the database column
+	DatabaseType string
 
-	// Example provides an example value for the field, which can be of any type.
-	Example any
+	// ExampleValue provides an example value for the field
+	ExampleValue any
 
-	// Required indicates whether the field is required or not.
-	Required bool
+	// IsRequired indicates whether the field is required (from validation rules)
+	IsRequired bool
 
-	// Validate is a string that contains validation rules for the field, such as "required", "email", etc.
-	Validate string
+	// ValidationRules contains validation rules string (from `validate` tag)
+	ValidationRules string
 
-	// Edit is a string that indicates how the field should be edited, such as "text", "select", etc.
-	Edit string
+	// EditType indicates how the field should be edited (from `edit` tag)
+	EditType string
 
-	// Scope contains the scope requirements for this field
-	Scope string
+	// ScopeRules contains the scope requirements for this field (from `scope` tag)
+	ScopeRules string
 
-	// Columns is a list of database column names that correspond to the fields in the model.
-	Columns []string
+	// ColumnNames is a list of database column names (for table-level metadata)
+	ColumnNames []string
 
-	// Fields is a slice of Meta that contains metadata for each field in the model.
-	Fields []*Meta
+	// FieldMetadata is a slice of Meta for each field in the model (for table-level metadata)
+	FieldMetadata []*Meta
 }
 
 // extractFields extracts fields from a given type and returns metadata about them.
-func extractFields(t reflect.Type) ([]*Meta, []string, map[string]any) {
-	f := make([]*Meta, 0, t.NumField())
-	c := []string{}
-	ex := make(map[string]any)
-	for i := range t.NumField() {
-		field := t.Field(i)
+func extractFields(reflectType reflect.Type) ([]*Meta, []string, map[string]any) {
+	Log.Debug("Extracting fields from type", 
+		zap.String("type_name", reflectType.Name()),
+		zap.Int("field_count", reflectType.NumField()))
 
-		n := field.Name
-		d := field.Tag.Get("db")
-		j := field.Tag.Get("json")
-		s := field.Tag.Get("desc")
-		v := field.Tag.Get("validate")
-		e := field.Tag.Get("edit")
-		sc := field.Tag.Get("scope")
-		x := field.Tag.Get("ex")
-		t := field.Type.String()
-		st := "text"
+	fieldMetas := make([]*Meta, 0, reflectType.NumField())
+	columnNames := []string{}
+	exampleValues := make(map[string]any)
+	
+	for i := range reflectType.NumField() {
+		field := reflectType.Field(i)
+
+		// Extract struct tags with descriptive names
+		fieldName := field.Name
+		dbColumnName := field.Tag.Get("db")
+		jsonFieldName := field.Tag.Get("json")
+		description := field.Tag.Get("desc")
+		validationRules := field.Tag.Get("validate")
+		editType := field.Tag.Get("edit")
+		scopeRules := field.Tag.Get("scope")
+		exampleValue := field.Tag.Get("ex")
+		goFieldType := field.Type.String()
+		sqlColumnType := "text" // default
+
+		Log.Debug("Processing field", 
+			zap.String("field_name", fieldName),
+			zap.String("go_type", goFieldType),
+			zap.String("db_column", dbColumnName),
+			zap.String("json_name", jsonFieldName))
 
 		// Skip fields with json:"-" as they should not appear in OpenAPI schemas
-		if j == "-" {
+		if jsonFieldName == "-" {
+			Log.Debug("Skipping field with json:\"-\"", zap.String("field", fieldName))
 			continue
 		}
 
-		var exv any
-		switch t {
+		var parsedExample any
+		switch goFieldType {
 		case "zbz.Model":
 			// Skip the base model fields, these are handled separately
+			Log.Debug("Skipping embedded Model field", zap.String("field", fieldName))
 			continue
 		case "int", "int32":
-			i, _ := strconv.Atoi(x)
-			exv = i
-			st = "integer"
+			if exampleValue != "" {
+				if parsed, err := strconv.Atoi(exampleValue); err != nil {
+					Log.Warn("Failed to parse int example value", 
+						zap.String("field", fieldName),
+						zap.String("example", exampleValue),
+						zap.Error(err))
+					parsedExample = 0
+				} else {
+					parsedExample = parsed
+				}
+			} else {
+				parsedExample = 0
+			}
+			sqlColumnType = "integer"
 		case "int64":
-			var i int64
-			i, _ = strconv.ParseInt(x, 10, 64)
-			exv = i
-			st = "bigint"
+			if exampleValue != "" {
+				if parsed, err := strconv.ParseInt(exampleValue, 10, 64); err != nil {
+					Log.Warn("Failed to parse int64 example value", 
+						zap.String("field", fieldName),
+						zap.String("example", exampleValue),
+						zap.Error(err))
+					parsedExample = int64(0)
+				} else {
+					parsedExample = parsed
+				}
+			} else {
+				parsedExample = int64(0)
+			}
+			sqlColumnType = "bigint"
 		case "float32":
-			var f float64
-			f, _ = strconv.ParseFloat(x, 32)
-			exv = float32(f)
-			st = "real"
+			if exampleValue != "" {
+				if parsed, err := strconv.ParseFloat(exampleValue, 32); err != nil {
+					Log.Warn("Failed to parse float32 example value", 
+						zap.String("field", fieldName),
+						zap.String("example", exampleValue),
+						zap.Error(err))
+					parsedExample = float32(0)
+				} else {
+					parsedExample = float32(parsed)
+				}
+			} else {
+				parsedExample = float32(0)
+			}
+			sqlColumnType = "real"
 		case "float64":
-			var f float64
-			f, _ = strconv.ParseFloat(x, 64)
-			exv = f
-			st = "double precision"
+			if exampleValue != "" {
+				if parsed, err := strconv.ParseFloat(exampleValue, 64); err != nil {
+					Log.Warn("Failed to parse float64 example value", 
+						zap.String("field", fieldName),
+						zap.String("example", exampleValue),
+						zap.Error(err))
+					parsedExample = float64(0)
+				} else {
+					parsedExample = parsed
+				}
+			} else {
+				parsedExample = float64(0)
+			}
+			sqlColumnType = "double precision"
 		case "string":
-			exv = x
+			parsedExample = exampleValue
+			sqlColumnType = "text"
 		case "bool":
-			var b bool
-			b, _ = strconv.ParseBool(x)
-			exv = b
-			st = "boolean"
+			if exampleValue != "" {
+				if parsed, err := strconv.ParseBool(exampleValue); err != nil {
+					Log.Warn("Failed to parse bool example value", 
+						zap.String("field", fieldName),
+						zap.String("example", exampleValue),
+						zap.Error(err))
+					parsedExample = false
+				} else {
+					parsedExample = parsed
+				}
+			} else {
+				parsedExample = false
+			}
+			sqlColumnType = "boolean"
 		case "time.Time":
-			var t time.Time
-			t, _ = time.Parse(time.RFC3339, x)
-			exv = t
-			st = "timestamp with time zone"
+			if exampleValue != "" {
+				if parsed, err := time.Parse(time.RFC3339, exampleValue); err != nil {
+					Log.Warn("Failed to parse time.Time example value", 
+						zap.String("field", fieldName),
+						zap.String("example", exampleValue),
+						zap.Error(err))
+					parsedExample = time.Time{}
+				} else {
+					parsedExample = parsed
+				}
+			} else {
+				parsedExample = time.Time{}
+			}
+			sqlColumnType = "timestamp with time zone"
 		case "[]byte":
-			exv = []byte(x)
-			st = "bytea"
+			parsedExample = []byte(exampleValue)
+			sqlColumnType = "bytea"
+		default:
+			Log.Warn("Unknown Go type encountered during field extraction", 
+				zap.String("field", fieldName),
+				zap.String("go_type", goFieldType))
+			parsedExample = exampleValue
 		}
 
-		f = append(f, &Meta{
-			Name:        n,
-			SourceName:  d,
-			DstName:     j,
-			Description: s,
-			Type:        t,
-			SourceType:  st,
-			Required:    strings.Contains(v, "required"),
-			Validate:    v,
-			Edit:        e,
-			Scope:       sc,
-			Example:     exv,
-		})
-		if d != "-" {
-			c = append(c, d)
-			ex[d] = exv
+		fieldMeta := &Meta{
+			Name:               fieldName,
+			DatabaseColumnName: dbColumnName,
+			JSONFieldName:      jsonFieldName,
+			Description:        description,
+			GoType:             goFieldType,
+			DatabaseType:       sqlColumnType,
+			IsRequired:         strings.Contains(validationRules, "required"),
+			ValidationRules:    validationRules,
+			EditType:           editType,
+			ScopeRules:         scopeRules,
+			ExampleValue:       parsedExample,
 		}
+
+		fieldMetas = append(fieldMetas, fieldMeta)
+		
+		if dbColumnName != "-" {
+			columnNames = append(columnNames, dbColumnName)
+			exampleValues[dbColumnName] = parsedExample
+		}
+
+		Log.Debug("Successfully processed field", 
+			zap.String("field", fieldName),
+			zap.String("sql_type", sqlColumnType),
+			zap.Bool("required", fieldMeta.IsRequired))
 	}
 
-	return f, c, ex
+	Log.Debug("Field extraction complete", 
+		zap.String("type", reflectType.Name()),
+		zap.Int("extracted_fields", len(fieldMetas)),
+		zap.Int("db_columns", len(columnNames)))
+
+	return fieldMetas, columnNames, exampleValues
 }
 
-// ExtractMeta extracts metadata from a given model type T, which must implement BaseModel.
-func extractMeta[T BaseModel](desc string) *Meta {
-	var model T
-	t := reflect.TypeOf(model)
+// extractMeta extracts metadata from a given model type T, which must implement BaseModel.
+func extractMeta[T BaseModel](description string) *Meta {
+	var modelInstance T
+	modelType := reflect.TypeOf(modelInstance)
 
-	var base Model
-	bt := reflect.TypeOf(base)
+	var baseModel Model
+	baseModelType := reflect.TypeOf(baseModel)
 
-	meta := &Meta{
-		Name:        t.Name(),
-		Description: desc,
-		Fields:      make([]*Meta, 0, t.NumField()+bt.NumField()),
-		Columns:     make([]string, 0, t.NumField()+bt.NumField()),
+	if modelType == nil {
+		Log.Error("Cannot extract meta from nil type")
+		return nil
 	}
 
-	tf, tc, te := extractFields(t)
-	btf, btc, bte := extractFields(bt)
+	Log.Info("Starting meta extraction for model", 
+		zap.String("model_name", modelType.Name()),
+		zap.String("description", description))
 
-	meta.Fields = append(meta.Fields, tf...)
-	meta.Fields = append(meta.Fields, btf...)
+	tableMeta := &Meta{
+		Name:          modelType.Name(),
+		Description:   description,
+		FieldMetadata: make([]*Meta, 0, modelType.NumField()+baseModelType.NumField()),
+		ColumnNames:   make([]string, 0, modelType.NumField()+baseModelType.NumField()),
+	}
 
-	meta.Columns = append(meta.Columns, tc...)
-	meta.Columns = append(meta.Columns, btc...)
+	// Extract fields from the model type
+	Log.Debug("Extracting fields from custom model type", zap.String("type", modelType.Name()))
+	modelFields, modelColumns, modelExamples := extractFields(modelType)
+	
+	// Extract fields from the base Model type  
+	Log.Debug("Extracting fields from base Model type")
+	baseFields, baseColumns, baseExamples := extractFields(baseModelType)
 
-	maps.Copy(te, bte)
-	meta.Example = te
+	// Combine model and base fields
+	tableMeta.FieldMetadata = append(tableMeta.FieldMetadata, modelFields...)
+	tableMeta.FieldMetadata = append(tableMeta.FieldMetadata, baseFields...)
 
-	return meta
+	tableMeta.ColumnNames = append(tableMeta.ColumnNames, modelColumns...)
+	tableMeta.ColumnNames = append(tableMeta.ColumnNames, baseColumns...)
+
+	// Merge example values (base examples won't override model examples)
+	combinedExamples := make(map[string]any)
+	maps.Copy(combinedExamples, modelExamples)
+	maps.Copy(combinedExamples, baseExamples)
+	tableMeta.ExampleValue = combinedExamples
+
+	Log.Info("Meta extraction completed", 
+		zap.String("model_name", modelType.Name()),
+		zap.Int("total_fields", len(tableMeta.FieldMetadata)),
+		zap.Int("total_columns", len(tableMeta.ColumnNames)),
+		zap.Int("example_values", len(combinedExamples)))
+
+	return tableMeta
 }

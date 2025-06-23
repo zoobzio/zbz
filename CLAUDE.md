@@ -23,7 +23,7 @@ lib/
 ├── auth.go        # OIDC authentication
 ├── logger.go      # Structured logging with zap
 ├── model.go       # Base model with common fields
-├── validate.go    # Basic validation (needs redesign)
+├── validate.go    # Validation with go-playground/validator
 └── macros/        # SQL query templates (.sqlx files)
 ```
 
@@ -42,6 +42,12 @@ lib/
   - Handlers now just call `ctx.Status(http.StatusNotFound)` 
 - **Logger Migration**: Moved from sugared to standard zap logger for performance
 - **Service Independence**: Error handling moved from Engine to HTTP layer
+- **Multi-Database Architecture**: Support for multiple database connections
+  - Database adapters in `lib/database/` directory with PostgreSQL implementation
+  - Each database owns its own Schema instance (no shared schemas)
+  - DatabaseContract system for assigning cores to specific databases
+  - Engine supports registering multiple databases with string keys
+  - Schema endpoints exposed per database: `/schema/{database_key}`
 
 ### 🔧 Current Architecture Strengths
 - Clean separation of concerns between services
@@ -50,31 +56,37 @@ lib/
 - Strong type safety with Go generics
 
 ### ⚠️ Known Technical Debt
-1. **Validation System**: Currently relies on external go-playground/validator
-   - Not aligned with framework's opinionated nature
-   - Limited integration with error handling
-   - Needs custom validation system design
-
-2. **SQL Injection Risk**: Macro interpolation at `lib/macro.go:56`
+1. **SQL Injection Risk**: Macro interpolation at `lib/macro.go:56`
    - TODO comment about sanitization
    - Raw SQL replacement without validation
 
-3. **Limited Query Flexibility**: 
+2. **Limited Query Flexibility**: 
    - Only basic CRUD operations supported
    - No filtering, pagination, or complex joins
    - No custom query support
+
+3. **Credentials Logging Risk**: Database contracts contain sensitive DSN strings
+   - DSN contains database passwords and connection details
+   - Currently manually avoiding logging DSN fields
+   - **NEEDS**: Privatization service to automatically redact sensitive fields from logs
+   - Should support struct tags like `json:"-"` but for logging (`log:"-"` or `private:"true"`)
+   - Must integrate with zap logger to automatically filter sensitive data
 
 ## Planned Features & Architecture Decisions
 
 ### 🎯 Near-Term Priorities
 
-#### 1. Custom Validation System
-**Goal**: Replace go-playground/validator with framework-native validation
-**Architecture Requirements**:
-- Integrate with model definitions using struct tags
-- Work seamlessly with auto-error handling
-- Support field-level and cross-field validation
-- Potentially different response structure for validation errors
+#### 1. Contract Matrix System (Critical Architecture Improvement)
+**Goal**: Complete contract-based dependency injection system
+**Vision**: Every service (Database, Handler, Validator, Auth, Logger, etc.) becomes contract-driven, enabling true "bring-your-own-X" architecture through a contract matrix where users can mix and match any combination of services.
+
+**Benefits**:
+- True BYOB architecture - users exchange contracts for configured instances
+- Engine becomes contract registry/factory: `engine.GetCore[User](CoreContract{...})`
+- Complete service flexibility - any service can be replaced through contracts
+- Consistent patterns across all framework components
+
+**Implementation**: All services get corresponding contracts (DatabaseContract, HandlerContract, ValidatorContract, etc.) and CoreContract orchestrates the complete service matrix.
 
 #### 2. ZBZ CLI & TUI Development Tools
 **Goal**: Create comprehensive developer experience tools
@@ -160,21 +172,21 @@ cmd/
 └── zlog/             # Enhanced from existing implementation
 ```
 
-#### 3. Query System Enhancement
+#### 2. Query System Enhancement
 **Current Limitation**: Only basic CRUD via SQL macros
 **Planned Approach**: Design flexible query builder or enhanced macro system
 - Support filtering, sorting, pagination
 - Maintain type safety
 - Consider relationship handling
 
-#### 4. Migration System
+#### 3. Migration System
 **Current Gap**: Tables created on startup, no versioning
 **Requirements**: 
 - Schema evolution support
 - Version tracking
 - Rollback capabilities
 
-#### 5. Natural Language Query (NLQ) System
+#### 4. Natural Language Query (NLQ) System
 **Goal**: AI-first search capabilities for simplifying UI and data access
 **Architecture Vision**:
 - **Per-Core NLQ**: Natural language queries on individual model types
@@ -218,7 +230,7 @@ results, err := engine.GlobalNLQ("show me recent activity for john@example.com")
 - **Database**: Support MySQL, SQLite beyond PostgreSQL
 - **Auth**: Pluggable auth providers beyond OIDC
 - **HTTP**: Custom router implementations
-- **Validation**: Custom validation engines
+- **Validation**: Pluggable validation providers
 
 #### Advanced Features
 - **Relationship Support**: Foreign keys, joins, eager loading

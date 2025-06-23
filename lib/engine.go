@@ -1,7 +1,7 @@
 package zbz
 
 import (
-	"strings"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
@@ -12,21 +12,42 @@ import (
 type Engine interface {
 	Register(models ...*Meta)
 	Attach(ops ...*Operation)
-	Inject(contracts ...*CoreContract)
+	Inject(contracts ...ContractInjector)
 	Prime()
 	Start()
-	GetUserCore() Core // Access to built-in user core
+	
+	// Multi-database support
+	RegisterDatabase(key string, database Database)
+	GetDatabase(key string) Database
+	
+	// Service access for contracts (TODO: replace with service contracts)
+	GetHTTP() HTTP
+	GetDocs() Docs
+	
+	// Core registry for convention-over-configuration lookup
+	RegisterCore(name string, core Core)
+	
 }
 
-// zEngine is the main application engine that holds the router, database connection, and authenticator.
+// Global engine instance for contract access (TODO: replace with service contracts)
+var globalEngine Engine
+
+// GetEngine returns the global engine instance
+func GetEngine() Engine {
+	if globalEngine == nil {
+		Log.Fatal("Engine not initialized - call NewEngine() first")
+	}
+	return globalEngine
+}
+
+// zEngine is the main application engine that holds the router, database connections, and authenticator.
 type zEngine struct {
-	auth     Auth
-	database Database
-	docs     Docs
-	health   Health
-	http     HTTP
-	schema   Schema
-	userCore Core // Built-in user management core
+	auth      Auth
+	databases map[string]Database // Support multiple databases
+	cores     map[string]Core     // Registry of cores by contract key
+	docs      Docs
+	health    Health
+	http      HTTP
 }
 
 // NewEngine initializes a new Engine instance with the necessary components.
@@ -40,35 +61,76 @@ func NewEngine() Engine {
 	// Create Auth with Redis integration
 	auth := NewAuth(redisClient)
 
-	// Create user core with limited operations (read, update only)
-	userCore := NewCore[User]("Built-in user management for authentication")
-
 	engine := &zEngine{
-		auth:     auth,
-		database: NewDatabase(),
-		docs:     NewDocs(),
-		health:   NewHealth(),
-		http:     http,
-		schema:   NewSchema(),
-		userCore: userCore,
+		auth:      auth,
+		databases: make(map[string]Database),
+		cores:     make(map[string]Core),
+		docs:      NewDocs(),
+		health:    NewHealth(),
+		http:      http,
 	}
+	
+	// No default database creation - cores will create databases via contracts
 
 	// Link auth to HTTP for middleware access
 	http.SetAuth(auth)
 
-	// Give auth access to user core
-	auth.SetUserCoreGetter(engine.GetUserCore)
+	// Give auth access to user core via registry lookup (convention-over-configuration)
+	// Any core named "User" will be used - framework default or user override
+	auth.SetUserCoreGetter(func() Core {
+		for _, core := range engine.cores {
+			if core.Meta().Name == "User" {
+				return core
+			}
+		}
+		Log.Fatal("User core not found - ensure a contract with Name: 'User' is injected")
+		return nil
+	})
 
+	// Set global engine reference for contract access
+	globalEngine = engine
+	
 	engine.Prime()
 	return engine
 }
 
-// Register data models with the engine's documentation service.
+// GetDatabaseSchema returns the schema for a specific database
+func (e *zEngine) GetDatabaseSchema(key string) Schema {
+	db := e.GetDatabase(key)
+	if db == nil {
+		return nil
+	}
+	return db.GetSchema()
+}
+
+// RegisterDatabase registers a database instance with the given key
+func (e *zEngine) RegisterDatabase(key string, database Database) {
+	Log.Debug("Registering database", zap.String("key", key))
+	e.databases[key] = database
+}
+
+// GetDatabase retrieves a database instance by key
+func (e *zEngine) GetDatabase(key string) Database {
+	db, exists := e.databases[key]
+	if !exists {
+		Log.Warn("Database not found, returning primary", zap.String("key", key))
+		return e.databases["primary"] // Fallback to primary
+	}
+	return db
+}
+
+
+
+// Register data models with the engine's documentation service and all database schemas.
 func (e *zEngine) Register(models ...*Meta) {
 	Log.Debug("Registering database models", zap.Int("models_count", len(models)))
 	for _, model := range models {
 		e.docs.AddSchema(model)
-		e.schema.AddMeta(model)
+		// Register model metadata with all database schemas
+		for key, db := range e.databases {
+			Log.Debug("Adding model to database schema", zap.String("model", model.Name), zap.String("database", key))
+			db.GetSchema().AddMeta(model)
+		}
 	}
 }
 
@@ -82,25 +144,27 @@ func (e *zEngine) Attach(ops ...*Operation) {
 	}
 }
 
-// Compose a database query and prepare it for execution.
-func (e *zEngine) Compose(contracts ...*MacroContract) {
-	Log.Debug("Composing query statements", zap.Int("contracts_count", len(contracts)))
+// Compose a database query and prepare it for execution on a specific database.
+func (e *zEngine) Compose(databaseKey string, contracts ...*MacroContract) {
+	Log.Debug("Composing query statements", zap.String("database", databaseKey), zap.Int("contracts_count", len(contracts)))
+	db := e.GetDatabase(databaseKey)
 	for _, contract := range contracts {
-		err := e.database.Prepare(contract)
+		err := db.Prepare(contract)
 		if err != nil {
-			Log.Fatal("Failed to prepare statement", zap.Any("contract", contract), zap.Error(err))
+			Log.Fatal("Failed to prepare statement", zap.String("database", databaseKey), zap.Any("contract", contract), zap.Error(err))
 		}
 	}
 }
 
-// Execute a database query via a contract and return the result.
-func (e *zEngine) Execute(contract *MacroContract, params map[string]any) (*sqlx.Rows, error) {
-	Log.Debug("Executing query contract with params", zap.Any("contract", contract), zap.Any("params", params))
+// Execute a database query via a contract and return the result on a specific database.
+func (e *zEngine) Execute(databaseKey string, contract *MacroContract, params map[string]any) (*sqlx.Rows, error) {
+	Log.Debug("Executing query contract with params", zap.String("database", databaseKey), zap.Any("contract", contract), zap.Any("params", params))
 
-	e.database.Prepare(contract)
-	defer e.database.Dismiss(contract)
+	db := e.GetDatabase(databaseKey)
+	db.Prepare(contract)
+	defer db.Dismiss(contract)
 
-	result, err := e.database.Execute(contract, params)
+	result, err := db.Execute(contract, params)
 	if err != nil {
 		return nil, err
 	}
@@ -108,42 +172,13 @@ func (e *zEngine) Execute(contract *MacroContract, params map[string]any) (*sqlx
 	return result, nil
 }
 
-// Inject core resources to the engine using CoreContracts, creating CRUD endpoints & documentation.
-func (e *zEngine) Inject(contracts ...*CoreContract) {
-	Log.Debug("Injecting core contracts", zap.Int("contract_count", len(contracts)))
+
+// Inject contracts into the engine - each contract handles its own complete setup
+func (e *zEngine) Inject(contracts ...ContractInjector) {
+	Log.Debug("Injecting contracts", zap.Int("contract_count", len(contracts)))
 	for _, contract := range contracts {
-		core := contract.Core
-		meta := core.Meta()
-		e.Register(meta)
-
-		// Add OpenAPI tag with the contract's description
-		e.docs.AddTag(meta.Name, contract.Description)
-
-		_, err := e.Execute(core.Table(), nil)
-		if err != nil {
-			Log.Fatal("Failed to create table", zap.Any("meta", meta), zap.Error(err))
-		}
-		e.Compose(
-			core.Contracts()...,
-		)
-
-		// Filter operations based on enabled handlers
-		operations := core.Operations()
-		if contract.Handlers != nil && len(contract.Handlers) > 0 {
-			// Filter to only include specified handlers
-			filteredOps := make([]*Operation, 0)
-			for _, op := range operations {
-				for _, enabledHandler := range contract.Handlers {
-					if strings.Contains(op.Name, enabledHandler) {
-						filteredOps = append(filteredOps, op)
-						break
-					}
-				}
-			}
-			operations = filteredOps
-		}
-
-		e.Attach(operations...)
+		// Each contract is self-contained and handles its own injection
+		contract.Inject()
 	}
 }
 
@@ -153,16 +188,14 @@ func (e *zEngine) Prime() {
 
 	// Bind services to the HTTP router
 	e.http.Use(func(c *gin.Context) {
-		c.Set("db", e.database)
+		// Set primary database for backward compatibility
+		c.Set("db", e.GetDatabase("primary"))
+		// Set database registry for multi-database access
+		c.Set("databases", e.databases)
 		c.Next()
 	})
 
-	// Set up built-in User core with limited operations
-	e.Inject(&CoreContract{
-		Core:        e.userCore,
-		Description: "Built-in user management for authentication and profile operations",
-		Handlers:    []string{"Get", "Update"}, // Only allow read and update operations
-	})
+	// Built-in user core will be injected via UserContract from main.go
 
 	// Set up common inputs
 	e.docs.AddParameter(&OpenAPIParameter{
@@ -198,8 +231,16 @@ func (e *zEngine) Prime() {
 	}
 	e.http.AddRoute(scalarOp)
 	
-	// Schema endpoint remains unauthenticated for basic introspection
-	e.http.GET("/schema", e.schema.SchemaHandler)
+	// Schema endpoints for each database (unauthenticated for basic introspection)
+	for key, db := range e.databases {
+		path := fmt.Sprintf("/schema/%s", key)
+		e.http.GET(path, db.GetSchema().SchemaHandler)
+		Log.Debug("Added schema endpoint", zap.String("path", path), zap.String("database", key))
+	}
+	// Default schema endpoint points to primary database for backward compatibility
+	if primary := e.GetDatabase("primary"); primary != nil {
+		e.http.GET("/schema", primary.GetSchema().SchemaHandler)
+	}
 
 	// Add auth endpoints w/o documentation
 	e.http.GET("/auth/login", e.auth.LoginHandler)
@@ -210,9 +251,22 @@ func (e *zEngine) Prime() {
 	e.http.GET("/health", e.health.HealthCheckHandler)
 }
 
-// GetUserCore returns the built-in user core
-func (e *zEngine) GetUserCore() Core {
-	return e.userCore
+
+
+// GetHTTP returns the HTTP service instance
+func (e *zEngine) GetHTTP() HTTP {
+	return e.http
+}
+
+// GetDocs returns the Docs service instance  
+func (e *zEngine) GetDocs() Docs {
+	return e.docs
+}
+
+// RegisterCore registers a core in the engine registry for lookup by name
+func (e *zEngine) RegisterCore(name string, core Core) {
+	e.cores[name] = core
+	Log.Debug("Registered core in engine registry", zap.String("name", name))
 }
 
 // Start the engine by running an HTTP server

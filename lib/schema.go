@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
@@ -137,6 +138,11 @@ type Schema interface {
 	AddMeta(meta *Meta)
 	GenerateDocument() *DatabaseSchemaDocument
 	SchemaHandler(ctx *gin.Context)
+	
+	// Validation methods for SQL macro safety
+	IsValidTable(name string) bool
+	IsValidColumns(table string, columns []string) bool
+	GetTableColumns(table string) []string
 }
 
 // zSchema implements the Schema interface
@@ -154,7 +160,10 @@ func NewSchema() Schema {
 
 // AddMeta registers a model's metadata for schema generation
 func (s *zSchema) AddMeta(meta *Meta) {
+	Log.Debug("Adding meta to schema", zap.String("model", meta.Name))
 	s.metas = append(s.metas, *meta)
+	// Invalidate cached schema so it gets regenerated with new meta
+	s.schema = nil
 }
 
 // GenerateDocument creates a complete database schema document
@@ -170,18 +179,18 @@ func (s *zSchema) GenerateDocument() *DatabaseSchemaDocument {
 		totalColumns += len(tableSchema.Columns)
 
 		// Extract relationships from fields
-		for _, field := range meta.Fields {
-			if field.Type == "zbz.Model" {
+		for _, field := range meta.FieldMetadata {
+			if field.GoType == "zbz.Model" {
 				continue // Skip embedded model fields
 			}
 
 			// Look for foreign key relationships based on naming patterns
-			if strings.HasSuffix(field.SourceName, "_id") && field.Type == "string" {
-				referencedTable := strings.TrimSuffix(field.SourceName, "_id")
+			if strings.HasSuffix(field.DatabaseColumnName, "_id") && field.GoType == "string" {
+				referencedTable := strings.TrimSuffix(field.DatabaseColumnName, "_id")
 				relations = append(relations, &TableRelation{
 					Type:        "many-to-one",
 					FromTable:   strings.ToLower(meta.Name),
-					FromColumns: []string{field.SourceName},
+					FromColumns: []string{field.DatabaseColumnName},
 					ToTable:     referencedTable,
 					ToColumns:   []string{"id"},
 					Description: fmt.Sprintf("%s belongs to %s", meta.Name, referencedTable),
@@ -222,39 +231,39 @@ func (s *zSchema) generateTableSchema(meta *Meta) *TableSchema {
 	primaryKey := []string{"id"}
 	examples := make(map[string]any)
 
-	for _, field := range meta.Fields {
-		if field.Type == "zbz.Model" || field.SourceName == "-" {
+	for _, field := range meta.FieldMetadata {
+		if field.GoType == "zbz.Model" || field.DatabaseColumnName == "-" {
 			continue
 		}
 
 		columnSchema := &ColumnSchema{
-			Name:        field.SourceName,
-			Type:        field.Type,
-			SQLType:     field.SourceType,
+			Name:        field.DatabaseColumnName,
+			Type:        field.GoType,
+			SQLType:     field.DatabaseType,
 			Description: field.Description,
-			Required:    field.Required,
+			Required:    field.IsRequired,
 		}
 
 		// Add validation constraints if available
-		if field.Validate != "" {
-			constraints := s.parseValidationConstraints(field.Validate)
+		if field.ValidationRules != "" {
+			constraints := s.parseValidationConstraints(field.ValidationRules)
 			if constraints != nil {
 				columnSchema.Constraints = constraints
 			}
 		}
 
 		// Add examples
-		if field.Example != nil {
-			columnSchema.Examples = []any{field.Example}
-			examples[field.SourceName] = field.Example
+		if field.ExampleValue != nil {
+			columnSchema.Examples = []any{field.ExampleValue}
+			examples[field.DatabaseColumnName] = field.ExampleValue
 		}
 
 		// Detect unique fields
-		if strings.Contains(field.Validate, "email") || strings.Contains(field.Validate, "uuid") {
+		if strings.Contains(field.ValidationRules, "email") || strings.Contains(field.ValidationRules, "uuid") {
 			columnSchema.Unique = true
 		}
 
-		columns[field.SourceName] = columnSchema
+		columns[field.DatabaseColumnName] = columnSchema
 	}
 
 	return &TableSchema{
@@ -398,4 +407,66 @@ func parseInt(s string) *int {
 		return &val
 	}
 	return nil
+}
+
+// IsValidTable checks if a table name exists in the schema
+func (s *zSchema) IsValidTable(name string) bool {
+	// Always generate fresh schema to avoid caching issues
+	s.GenerateDocument()
+	
+	Log.Debug("Checking table validity", 
+		zap.String("table", name),
+		zap.Int("total_metas", len(s.metas)),
+		zap.Int("total_tables", len(s.schema.Tables)),
+		zap.Strings("available_tables", s.getTableNames()))
+	
+	_, exists := s.schema.Tables[strings.ToLower(name)]
+	return exists
+}
+
+// IsValidColumns checks if all columns exist in the specified table
+func (s *zSchema) IsValidColumns(table string, columns []string) bool {
+	// Always generate fresh schema
+	s.GenerateDocument()
+	
+	tableSchema, exists := s.schema.Tables[strings.ToLower(table)]
+	if !exists {
+		return false
+	}
+	
+	for _, column := range columns {
+		column = strings.TrimSpace(column)
+		if _, exists := tableSchema.Columns[column]; !exists {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// GetTableColumns returns all column names for a table
+func (s *zSchema) GetTableColumns(table string) []string {
+	// Always generate fresh schema
+	s.GenerateDocument()
+	
+	tableSchema, exists := s.schema.Tables[strings.ToLower(table)]
+	if !exists {
+		return []string{}
+	}
+	
+	columns := make([]string, 0, len(tableSchema.Columns))
+	for columnName := range tableSchema.Columns {
+		columns = append(columns, columnName)
+	}
+	
+	return columns
+}
+
+// getTableNames returns a list of all table names for debugging
+func (s *zSchema) getTableNames() []string {
+	names := make([]string, 0, len(s.schema.Tables))
+	for name := range s.schema.Tables {
+		names = append(names, name)
+	}
+	return names
 }

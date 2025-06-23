@@ -3,7 +3,6 @@ package zbz
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -31,21 +30,20 @@ type ValidationErrors struct {
 	Errors []ValidationError `json:"errors"`
 }
 
+// ParsedValidationRules represents validation rules in a structured format
+// Used to pass parsed rules to Database and Docs for constraint generation
+type ParsedValidationRules struct {
+	Rules     []ValidationRule `json:"rules"`
+	FieldType string          `json:"fieldType"`
+	FieldName string          `json:"fieldName"`
+}
+
 func (ve ValidationErrors) Error() string {
 	messages := make([]string, len(ve.Errors))
 	for i, err := range ve.Errors {
 		messages[i] = fmt.Sprintf("%s: %s", err.Field, err.Message)
 	}
 	return strings.Join(messages, "; ")
-}
-
-// DatabaseConstraints represents database-level constraints derived from validation rules
-type DatabaseConstraints struct {
-	NotNull    bool
-	Unique     bool
-	Check      string
-	Default    string
-	Constraint string
 }
 
 // Validate is an interface that defines methods for validating values
@@ -57,10 +55,8 @@ type Validate interface {
 	// Error extraction and formatting
 	ExtractErrors(err error) map[string]string
 
-	// Rule parsing for database and documentation generation
+	// Rule parsing (used by other services to understand validation tags)
 	ParseValidationRules(validate string) []ValidationRule
-	GetDatabaseConstraints(rules []ValidationRule, fieldType string) DatabaseConstraints
-	GetOpenAPIConstraints(rules []ValidationRule, fieldType string) map[string]any
 }
 
 // zValidate implements the Validate interface using go-playground/validator
@@ -120,8 +116,7 @@ func (v *zValidate) ExtractErrors(err error) map[string]string {
 	return map[string]string{"_error": err.Error()}
 }
 
-// validate is a global instance of the Validate interface
-var validate Validate
+// Note: Global validator removed - each Core now has its own validator instance
 
 // NewValidate creates a new Validate instance using go-playground/validator
 func NewValidate() Validate {
@@ -285,174 +280,4 @@ func (v *zValidate) ParseValidationRules(validate string) []ValidationRule {
 	return rules
 }
 
-// GetDatabaseConstraints converts validation rules to database constraints
-func (v *zValidate) GetDatabaseConstraints(rules []ValidationRule, fieldType string) DatabaseConstraints {
-	constraints := DatabaseConstraints{}
-
-	for _, rule := range rules {
-		switch rule.Name {
-		case "required":
-			constraints.NotNull = true
-
-		case "uuid", "uuid4", "email":
-			// UUIDs and emails should typically be unique
-			constraints.Unique = true
-
-		case "min":
-			if len(rule.Params) > 0 {
-				if fieldType == "string" {
-					constraints.Check = fmt.Sprintf("LENGTH(%s) >= %s", "{{column}}", rule.Params[0])
-				} else if fieldType == "integer" || fieldType == "number" {
-					constraints.Check = fmt.Sprintf("%s >= %s", "{{column}}", rule.Params[0])
-				}
-			}
-
-		case "max":
-			if len(rule.Params) > 0 {
-				if fieldType == "string" {
-					constraints.Check = fmt.Sprintf("LENGTH(%s) <= %s", "{{column}}", rule.Params[0])
-				} else if fieldType == "integer" || fieldType == "number" {
-					constraints.Check = fmt.Sprintf("%s <= %s", "{{column}}", rule.Params[0])
-				}
-			}
-
-		case "oneof":
-			if len(rule.Params) > 0 {
-				values := make([]string, len(rule.Params))
-				for i, param := range rule.Params {
-					values[i] = fmt.Sprintf("'%s'", param)
-				}
-				constraints.Check = fmt.Sprintf("%s IN (%s)", "{{column}}", strings.Join(values, ", "))
-			}
-
-		case "regexp":
-			if len(rule.Params) > 0 {
-				constraints.Check = fmt.Sprintf("%s ~ '%s'", "{{column}}", rule.Params[0])
-			}
-		}
-	}
-
-	return constraints
-}
-
-// GetOpenAPIConstraints converts validation rules to OpenAPI constraints
-func (v *zValidate) GetOpenAPIConstraints(rules []ValidationRule, fieldType string) map[string]any {
-	constraints := make(map[string]any)
-
-	for _, rule := range rules {
-		switch rule.Name {
-		case "min":
-			if len(rule.Params) > 0 {
-				if fieldType == "string" {
-					if minLen, err := strconv.Atoi(rule.Params[0]); err == nil {
-						constraints["minLength"] = minLen
-					}
-				} else if fieldType == "integer" || fieldType == "number" {
-					if minVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
-						constraints["minimum"] = minVal
-					}
-				}
-			}
-
-		case "max":
-			if len(rule.Params) > 0 {
-				if fieldType == "string" {
-					if maxLen, err := strconv.Atoi(rule.Params[0]); err == nil {
-						constraints["maxLength"] = maxLen
-					}
-				} else if fieldType == "integer" || fieldType == "number" {
-					if maxVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
-						constraints["maximum"] = maxVal
-					}
-				}
-			}
-
-		case "gt":
-			if len(rule.Params) > 0 {
-				if minVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
-					constraints["exclusiveMinimum"] = minVal
-				}
-			}
-
-		case "gte":
-			if len(rule.Params) > 0 {
-				if minVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
-					constraints["minimum"] = minVal
-				}
-			}
-
-		case "lt":
-			if len(rule.Params) > 0 {
-				if maxVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
-					constraints["exclusiveMaximum"] = maxVal
-				}
-			}
-
-		case "lte":
-			if len(rule.Params) > 0 {
-				if maxVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
-					constraints["maximum"] = maxVal
-				}
-			}
-
-		case "len":
-			if len(rule.Params) > 0 && fieldType == "string" {
-				if length, err := strconv.Atoi(rule.Params[0]); err == nil {
-					constraints["minLength"] = length
-					constraints["maxLength"] = length
-				}
-			}
-
-		case "oneof":
-			if len(rule.Params) > 0 {
-				enum := make([]any, len(rule.Params))
-				for i, param := range rule.Params {
-					enum[i] = param
-				}
-				constraints["enum"] = enum
-			}
-
-		case "regexp":
-			if len(rule.Params) > 0 {
-				constraints["pattern"] = rule.Params[0]
-			}
-
-		case "email":
-			if fieldType == "string" {
-				constraints["format"] = "email"
-			}
-
-		case "url":
-			if fieldType == "string" {
-				constraints["format"] = "uri"
-			}
-
-		case "uuid", "uuid4":
-			if fieldType == "string" {
-				constraints["format"] = "uuid"
-			}
-
-		case "alpha":
-			if fieldType == "string" {
-				constraints["pattern"] = "^[a-zA-Z]+$"
-			}
-
-		case "alphanum":
-			if fieldType == "string" {
-				constraints["pattern"] = "^[a-zA-Z0-9]+$"
-			}
-
-		case "numeric":
-			if fieldType == "string" {
-				constraints["pattern"] = "^[0-9]+$"
-			}
-		}
-	}
-
-	return constraints
-}
-
-// Initialize global validator
-func init() {
-	validate = NewValidate()
-}
+// Note: Global validator initialization removed - validators are created per-Core

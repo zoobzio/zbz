@@ -52,6 +52,11 @@ type zConfig struct {
 // config is a global variable that holds the application configuration.
 var config Config
 
+// GetConfig returns the global configuration instance
+func GetConfig() Config {
+	return config
+}
+
 // Host returns the host for the API server.
 func (c *zConfig) Host() string {
 	return c.host

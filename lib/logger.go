@@ -23,31 +23,6 @@ type zLogger struct {
 	*zap.Logger
 }
 
-// Debug logs a message at debug level with structured fields
-func (l *zLogger) Debug(msg string, fields ...zap.Field) {
-	l.Logger.Debug(msg, fields...)
-}
-
-// Info logs a message at info level with structured fields
-func (l *zLogger) Info(msg string, fields ...zap.Field) {
-	l.Logger.Info(msg, fields...)
-}
-
-// Warn logs a message at warn level with structured fields
-func (l *zLogger) Warn(msg string, fields ...zap.Field) {
-	l.Logger.Warn(msg, fields...)
-}
-
-// Error logs a message at error level with structured fields
-func (l *zLogger) Error(msg string, fields ...zap.Field) {
-	l.Logger.Error(msg, fields...)
-}
-
-// Fatal logs a message at fatal level with structured fields and exits
-func (l *zLogger) Fatal(msg string, fields ...zap.Field) {
-	l.Logger.Fatal(msg, fields...)
-}
-
 // Log is a global logger instance that can be used throughout the application.
 var Log Logger
 
@@ -71,12 +46,12 @@ func LogMiddleware(c *gin.Context) {
 func InitLogger(devMode bool, logFile string) {
 	var cores []zapcore.Core
 
-	// Lumberjack logger for file output
+	// Lumberjack logger for file output with smaller rotation for dev
 	fileSyncer := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   logFile,
-		MaxSize:    100, // megabytes
-		MaxBackups: 3,
-		MaxAge:     30, // days
+		MaxSize:    10, // megabytes (smaller for dev)
+		MaxBackups: 5,  // Keep more backups for debugging
+		MaxAge:     7,  // days (shorter for dev)
 		Compress:   true,
 	})
 	fileEncoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())

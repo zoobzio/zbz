@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -24,13 +25,15 @@ type Docs interface {
 
 // Docs represents the documentation structure for an API
 type zDocs struct {
-	spec *OpenAPISpec
-	yaml []byte
+	spec      *OpenAPISpec
+	yaml      []byte
+	validator Validate
 }
 
 // NewDocs creates a new Docs instance
 func NewDocs() Docs {
 	return &zDocs{
+		validator: NewValidate(),
 		spec: &OpenAPISpec{
 			OpenAPI: "3.1.0",
 			Info: &OpenAPIInfo{
@@ -194,7 +197,7 @@ func (d *zDocs) AddPath(op *Operation, errorManager ErrorManager) {
 
 // AddSchema adds a new schema to the OpenAPI specification
 func (d *zDocs) AddSchema(meta *Meta) {
-	example, err := json.Marshal(meta.Example)
+	example, err := json.Marshal(meta.ExampleValue)
 	if err != nil {
 		Log.Fatal("Failed to marshal example for model", zap.Any("meta", meta), zap.Error(err))
 	}
@@ -220,10 +223,10 @@ func (d *zDocs) AddSchema(meta *Meta) {
 		Properties:  map[string]*OpenAPISchema{},
 	}
 
-	for _, field := range meta.Fields {
+	for _, field := range meta.FieldMetadata {
 		var ft string
 		var ff string
-		switch field.Type {
+		switch field.GoType {
 		case "int", "int32":
 			ft = "integer"
 			ff = "int32"
@@ -238,11 +241,11 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			ff = "double"
 		case "string":
 			ft = "string"
-			if strings.Contains(field.Validate, "email") {
+			if strings.Contains(field.ValidationRules, "email") {
 				ff = "email"
-			} else if strings.Contains(field.Validate, "uuid") {
+			} else if strings.Contains(field.ValidationRules, "uuid") {
 				ff = "uuid"
-			} else if strings.Contains(field.Validate, "url") {
+			} else if strings.Contains(field.ValidationRules, "url") {
 				ff = "uri"
 			}
 		case "bool":
@@ -259,26 +262,32 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			Type:        ft,
 			Format:      ff,
 			Description: field.Description,
-			Example:     field.Example,
+			Example:     field.ExampleValue,
 		}
 		
 		// Handle scoped fields - mark as optional for SDK generation
-		isScoped := field.Scope != ""
-		originallyRequired := field.Required
+		isScoped := field.ScopeRules != ""
+		originallyRequired := field.IsRequired
 		
 		if isScoped {
 			// Add scope extensions for SDK generators to understand field permissions
 			if fieldSchema.Extensions == nil {
 				fieldSchema.Extensions = make(map[string]any)
 			}
-			fieldSchema.Extensions["x-scope"] = field.Scope
+			fieldSchema.Extensions["x-scope"] = field.ScopeRules
 			fieldSchema.Extensions["x-scope-required"] = originallyRequired
 			fieldSchema.Extensions["x-scope-description"] = "This field may be undefined if the user lacks the required permissions"
 		}
 		
 		// Apply validation constraints from struct tags using our validation system
-		rules := validate.ParseValidationRules(field.Validate)
-		constraints := validate.GetOpenAPIConstraints(rules, ft)
+		// Parse validation rules using validator, then generate OpenAPI constraints
+		rules := d.validator.ParseValidationRules(field.ValidationRules)
+		parsedRules := ParsedValidationRules{
+			Rules:     rules,
+			FieldType: ft,
+			FieldName: field.JSONFieldName,
+		}
+		constraints := d.getOpenAPIConstraints(parsedRules)
 		for key, value := range constraints {
 			switch key {
 			case "minLength":
@@ -320,25 +329,25 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			}
 		}
 		
-		schema.Properties[field.DstName] = fieldSchema
+		schema.Properties[field.JSONFieldName] = fieldSchema
 
 		// For response schemas, scoped fields are always optional (even if DB requires them)
 		// since they might be filtered out based on user permissions
-		if field.Required && !isScoped {
-			schema.Required = append(schema.Required, field.DstName)
+		if field.IsRequired && !isScoped {
+			schema.Required = append(schema.Required, field.JSONFieldName)
 		}
 
-		// TODO we can handle edit permissions here using the value of field.Edit
-		if field.Edit != "" {
+		// TODO we can handle edit permissions here using the value of field.EditType
+		if field.EditType != "" {
 			payload := &OpenAPISchema{
 				Type:        ft,
 				Format:      ff,
 				Description: field.Description,
-				Example:     field.Example,
+				Example:     field.ExampleValue,
 			}
 			
 			// Apply validation constraints to payload schemas too using our validation system
-			payloadConstraints := validate.GetOpenAPIConstraints(rules, ft)
+			payloadConstraints := d.getOpenAPIConstraints(parsedRules)
 			for key, value := range payloadConstraints {
 				switch key {
 				case "minLength":
@@ -386,18 +395,18 @@ func (d *zDocs) AddSchema(meta *Meta) {
 				if payload.Extensions == nil {
 					payload.Extensions = make(map[string]any)
 				}
-				payload.Extensions["x-scope"] = field.Scope
+				payload.Extensions["x-scope"] = field.ScopeRules
 				payload.Extensions["x-scope-required"] = originallyRequired
 				payload.Extensions["x-scope-description"] = "This field requires specific permissions to modify"
 			}
 			
-			createPayload.Properties[field.DstName] = payload
-			updatePayload.Properties[field.DstName] = payload
+			createPayload.Properties[field.JSONFieldName] = payload
+			updatePayload.Properties[field.JSONFieldName] = payload
 
 			// For create payloads, scoped fields that are required in DB still need to be provided
 			// (the scoping happens at runtime during deserialization)
-			if field.Required {
-				createPayload.Required = append(createPayload.Required, field.DstName)
+			if field.IsRequired {
+				createPayload.Required = append(createPayload.Required, field.JSONFieldName)
 			}
 			// Update payloads are always optional since they're PATCH-style
 		}
@@ -425,6 +434,123 @@ func (d *zDocs) AddSchema(meta *Meta) {
 			},
 		},
 	}
+}
+
+// getOpenAPIConstraints converts parsed validation rules to OpenAPI constraints
+func (d *zDocs) getOpenAPIConstraints(parsed ParsedValidationRules) map[string]any {
+	constraints := make(map[string]any)
+
+	for _, rule := range parsed.Rules {
+		switch rule.Name {
+		case "min":
+			if len(rule.Params) > 0 {
+				if parsed.FieldType == "string" {
+					if minLen, err := strconv.Atoi(rule.Params[0]); err == nil {
+						constraints["minLength"] = minLen
+					}
+				} else if parsed.FieldType == "integer" || parsed.FieldType == "number" {
+					if minVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
+						constraints["minimum"] = minVal
+					}
+				}
+			}
+
+		case "max":
+			if len(rule.Params) > 0 {
+				if parsed.FieldType == "string" {
+					if maxLen, err := strconv.Atoi(rule.Params[0]); err == nil {
+						constraints["maxLength"] = maxLen
+					}
+				} else if parsed.FieldType == "integer" || parsed.FieldType == "number" {
+					if maxVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
+						constraints["maximum"] = maxVal
+					}
+				}
+			}
+
+		case "gt":
+			if len(rule.Params) > 0 {
+				if minVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
+					constraints["exclusiveMinimum"] = minVal
+				}
+			}
+
+		case "gte":
+			if len(rule.Params) > 0 {
+				if minVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
+					constraints["minimum"] = minVal
+				}
+			}
+
+		case "lt":
+			if len(rule.Params) > 0 {
+				if maxVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
+					constraints["exclusiveMaximum"] = maxVal
+				}
+			}
+
+		case "lte":
+			if len(rule.Params) > 0 {
+				if maxVal, err := strconv.ParseFloat(rule.Params[0], 64); err == nil {
+					constraints["maximum"] = maxVal
+				}
+			}
+
+		case "len":
+			if len(rule.Params) > 0 && parsed.FieldType == "string" {
+				if length, err := strconv.Atoi(rule.Params[0]); err == nil {
+					constraints["minLength"] = length
+					constraints["maxLength"] = length
+				}
+			}
+
+		case "oneof":
+			if len(rule.Params) > 0 {
+				enum := make([]any, len(rule.Params))
+				for i, param := range rule.Params {
+					enum[i] = param
+				}
+				constraints["enum"] = enum
+			}
+
+		case "regexp":
+			if len(rule.Params) > 0 {
+				constraints["pattern"] = rule.Params[0]
+			}
+
+		case "email":
+			if parsed.FieldType == "string" {
+				constraints["format"] = "email"
+			}
+
+		case "url":
+			if parsed.FieldType == "string" {
+				constraints["format"] = "uri"
+			}
+
+		case "uuid", "uuid4":
+			if parsed.FieldType == "string" {
+				constraints["format"] = "uuid"
+			}
+
+		case "alpha":
+			if parsed.FieldType == "string" {
+				constraints["pattern"] = "^[a-zA-Z]+$"
+			}
+
+		case "alphanum":
+			if parsed.FieldType == "string" {
+				constraints["pattern"] = "^[a-zA-Z0-9]+$"
+			}
+
+		case "numeric":
+			if parsed.FieldType == "string" {
+				constraints["pattern"] = "^[0-9]+$"
+			}
+		}
+	}
+
+	return constraints
 }
 
 // GenerateYAML generates the OpenAPI specification in YAML format
