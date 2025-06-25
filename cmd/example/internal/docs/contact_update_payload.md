@@ -1,0 +1,1 @@
+Partial contact data for updates. Only include fields you want to change.

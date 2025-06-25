@@ -4,8 +4,37 @@ RUN go install github.com/air-verse/air@latest
 
 WORKDIR /app
 
+# Copy all go.mod files for multi-module setup
 COPY go.mod go.sum ./
+COPY api/go.mod api/go.sum ./api/
+COPY zlog/go.mod zlog/go.sum ./zlog/
+COPY hodor/go.mod hodor/go.sum ./hodor/
+COPY remark/go.mod remark/go.sum ./remark/
+COPY docula/go.mod docula/go.sum ./docula/
+COPY adapters/zlog-zap/go.mod adapters/zlog-zap/go.sum ./adapters/zlog-zap/
+COPY adapters/zlog-zerolog/go.mod adapters/zlog-zerolog/go.sum ./adapters/zlog-zerolog/
+COPY adapters/zlog-slog/go.mod adapters/zlog-slog/go.sum ./adapters/zlog-slog/
+COPY adapters/zlog-logrus/go.mod adapters/zlog-logrus/go.sum ./adapters/zlog-logrus/
+COPY adapters/zlog-simple/go.mod adapters/zlog-simple/go.sum ./adapters/zlog-simple/
+COPY adapters/zlog-apex/go.mod adapters/zlog-apex/go.sum ./adapters/zlog-apex/
+COPY adapters/hodor-minio/go.mod adapters/hodor-minio/go.sum ./adapters/hodor-minio/
+COPY adapters/hodor-memory/go.mod adapters/hodor-memory/go.sum ./adapters/hodor-memory/
+
+# Download dependencies for all modules
 RUN go mod download
+RUN cd api && go mod download
+RUN cd zlog && go mod download  
+RUN cd hodor && go mod download
+RUN cd remark && go mod download
+RUN cd docula && go mod download
+RUN cd adapters/zlog-zap && go mod download
+RUN cd adapters/zlog-zerolog && go mod download
+RUN cd adapters/zlog-slog && go mod download
+RUN cd adapters/zlog-logrus && go mod download
+RUN cd adapters/zlog-simple && go mod download
+RUN cd adapters/zlog-apex && go mod download
+RUN cd adapters/hodor-minio && go mod download
+RUN cd adapters/hodor-memory && go mod download
 
 EXPOSE 8080
 

@@ -1,6 +1,6 @@
 package models
 
-import zbz "zbz/lib"
+import zbz "zbz/api"
 
 type Form struct {
 	zbz.Model

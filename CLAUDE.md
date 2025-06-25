@@ -172,7 +172,29 @@ cmd/
 └── zlog/             # Enhanced from existing implementation
 ```
 
-#### 2. Query System Enhancement
+#### 2. Field Processing Pipeline for Logging
+**Status**: ✅ Foundation Implemented
+**Architecture**: Special field types are processed by adapters before logging
+- **CallDepth Field**: Adjusts call stack depth for accurate file/line reporting
+- Convenience functions (`zbz.Info()`) automatically add `CallDepth(1)`
+- Adapters extract and process special fields in a pipeline
+
+**Future Pipeline Fields** (ready to implement):
+```go
+// Encrypt sensitive data with customer-controlled keys
+zbz.Info("User login", zbz.Secret("password", plaintext))
+
+// Redact/hash PII based on compliance settings  
+zbz.Info("User registered", zbz.PII("ssn", "123-45-6789"))
+
+// Inject performance metrics
+zbz.Info("Request completed", zbz.Metric("latency_ms", 42))
+
+// Propagate correlation IDs across services
+zbz.Info("Processing request", zbz.Correlation(ctx))
+```
+
+#### 3. Query System Enhancement
 **Current Limitation**: Only basic CRUD via SQL macros
 **Planned Approach**: Design flexible query builder or enhanced macro system
 - Support filtering, sorting, pagination

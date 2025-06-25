@@ -2,7 +2,7 @@ package models
 
 import (
 	"encoding/json"
-	zbz "zbz/lib"
+	zbz "zbz/api"
 )
 
 type Property struct {

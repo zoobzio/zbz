@@ -1,0 +1,43 @@
+# Enhanced ZBZ Zlog Configuration
+name: "app-logger"
+description: "Production-ready application logger"
+
+# Driver and global settings
+provider: "zap"
+config:
+  level: "info"           # Global minimum level
+  format: "json"          # Global default format
+  
+  # Multiple output destinations
+  outputs:
+    # Console output for containers/development
+    - type: "console"
+      level: "debug"       # Override: show debug on console
+      format: "console"    # Override: pretty format for console
+      
+    # Application logs with rotation
+    - type: "file"
+      level: "info"        # Use global level
+      format: "json"       # Structured logs
+      target: "/var/log/app/application.log"
+      options:
+        max_size: 50       # 50MB per file
+        max_backups: 10    # Keep 10 old files
+        max_age: 30        # 30 days retention
+        compress: true     # Compress old files
+        
+    # Error-only logs for alerting
+    - type: "file"
+      level: "error"       # Only errors and fatal
+      format: "json"
+      target: "/var/log/app/errors.log"
+      options:
+        max_size: 10
+        max_backups: 5
+        max_age: 90        # Keep errors longer
+        compress: true
+  
+  # High-volume sampling (optional)
+  sampling:
+    initial: 100          # Log first 100 per second
+    thereafter: 1000      # Then 1 in 1000

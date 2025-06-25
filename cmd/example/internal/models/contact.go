@@ -1,7 +1,7 @@
 package models
 
 import (
-	"zbz/lib"
+	"zbz/api"
 )
 
 type Contact struct {

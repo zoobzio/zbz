@@ -1,0 +1,1 @@
+A simple contact management API demonstrating ZBZ framework features like automatic CRUD generation, Auth0 integration, and remark-driven documentation.

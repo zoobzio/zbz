@@ -1,6 +1,6 @@
 package models
 
-import "zbz/lib"
+import "zbz/api"
 
 type Company struct {
 	zbz.Model

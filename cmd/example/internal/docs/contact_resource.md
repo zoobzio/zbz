@@ -1,0 +1,1 @@
+Manage individual contacts with CRUD operations. Supports authentication-based field filtering.

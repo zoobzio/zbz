@@ -4,8 +4,9 @@ import (
 	"context"
 
 	"zbz/cmd/example/internal/contracts"
-	"zbz/lib"
-	"zbz/shared/logger"
+	"zbz/api"
+	"zbz/zlog"
+	_ "zbz/providers/zlog-zap"  // Import zap driver
 )
 
 func main() {
@@ -13,14 +14,22 @@ func main() {
 
 	_, _, err := zbz.InitTelemetry(ctx, "zbz")
 	if err != nil {
-		logger.Log.Fatal("Failed to initialize tracer", logger.Err(err))
+		zlog.Fatal("Failed to initialize tracer", zlog.Err(err))
 	}
+	
+	// Test hodor + flux integration before starting server
+	zlog.Info("Running hodor + flux integration test")
+	testHodorFluxIntegration()
+	
+	// Users can optionally add their own remark directories:
+	// zbz.Remark.AddPath("docs/custom")
 
 	e := zbz.NewEngine()
 
 	// Set up providers first
 	e.SetHTTP(&contracts.HTTPContract)
 	e.SetDatabase(&contracts.PrimaryDatabase)
+	e.SetAuth(&contracts.AuthContract)
 
 	// Inject core contracts - they handle their own setup including database creation
 	e.Inject(
@@ -30,6 +39,9 @@ func main() {
 		contracts.PropertyContract,
 		contracts.FieldContract,
 	)
+
+	// Prime the engine to set up middleware and default endpoints
+	e.Prime()
 
 	e.Start(":8080")
 }
