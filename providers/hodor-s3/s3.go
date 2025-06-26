@@ -10,13 +10,14 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	
 	"zbz/hodor"
 )
 
-// s3Storage implements BucketService interface using AWS S3
+// s3Storage implements HodorProvider interface using AWS S3
 type s3Storage struct {
 	client     *s3.S3
 	bucketName string
@@ -44,17 +45,19 @@ func NewS3Provider() hodor.BucketService {
 
 	s3Client := s3.New(sess)
 
-	s3s := &s3Storage{
+	// Create provider wrapper
+	provider := &s3Storage{
 		client:     s3Client,
 		bucketName: bucketName,
 	}
 	
 	// Ensure bucket exists
-	if err := s3s.ensureBucket(); err != nil {
-		panic(fmt.Sprintf("Failed to ensure bucket exists: %v", err))
+	if err := provider.ensureBucket(); err != nil {
+		return nil, fmt.Errorf("failed to ensure bucket exists: %w", err)
 	}
 
-	return s3s
+	// Create and return contract
+	return hodor.NewContract("s3", provider, s3Client, config), nil
 }
 
 // ensureBucket creates the bucket if it doesn't exist

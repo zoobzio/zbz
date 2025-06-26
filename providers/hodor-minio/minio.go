@@ -15,35 +15,41 @@ import (
 	"zbz/hodor"
 )
 
-// minioStorage implements BucketService interface using MinIO/S3
+// minioStorage implements HodorProvider interface using MinIO/S3
 type minioStorage struct {
 	client     *minio.Client
 	bucketName string
 }
 
-// NewMinioProvider creates a new MinIO-based storage provider
-func NewMinioProvider() hodor.BucketService {
-	endpoint := os.Getenv("ZBZ_MINIO_ENDPOINT")
+// NewMinIOStorage creates a MinIO storage contract with type-safe native client access
+// Returns a contract that can be registered as the global singleton or used independently
+// Example:
+//   contract := hodorminio.NewMinIOStorage(config)
+//   contract.Register()  // Register as global singleton
+//   minioClient := contract.Native()  // Get *minio.Client without casting
+func NewMinIOStorage(config hodor.HodorConfig) (*hodor.HodorContract[*minio.Client], error) {
+	// Apply defaults and use universal config
+	endpoint := config.Endpoint
 	if endpoint == "" {
 		endpoint = "localhost:9000"
 	}
 	
-	accessKey := os.Getenv("ZBZ_MINIO_ACCESS_KEY")
+	accessKey := config.AccessKey
 	if accessKey == "" {
 		accessKey = "minioadmin"
 	}
 	
-	secretKey := os.Getenv("ZBZ_MINIO_SECRET_KEY")
+	secretKey := config.SecretKey
 	if secretKey == "" {
 		secretKey = "minioadmin"
 	}
 	
-	bucketName := os.Getenv("ZBZ_MINIO_BUCKET")
+	bucketName := config.Bucket
 	if bucketName == "" {
 		bucketName = "zbz-storage"
 	}
 	
-	useSSL := os.Getenv("ZBZ_MINIO_SSL") == "true"
+	useSSL := config.EnableSSL
 
 	// Initialize MinIO client
 	client, err := minio.New(endpoint, &minio.Options{
@@ -51,20 +57,22 @@ func NewMinioProvider() hodor.BucketService {
 		Secure: useSSL,
 	})
 	if err != nil {
-		panic(fmt.Sprintf("Failed to create MinIO client: %v", err))
+		return nil, fmt.Errorf("failed to create MinIO client: %w", err)
 	}
 
-	ms := &minioStorage{
+	// Create provider wrapper
+	provider := &minioStorage{
 		client:     client,
 		bucketName: bucketName,
 	}
 	
 	// Ensure bucket exists
-	if err := ms.ensureBucket(); err != nil {
-		panic(fmt.Sprintf("Failed to ensure bucket exists: %v", err))
+	if err := provider.ensureBucket(); err != nil {
+		return nil, fmt.Errorf("failed to ensure bucket exists: %w", err)
 	}
 
-	return ms
+	// Create and return contract
+	return hodor.NewContract("minio", provider, client, config), nil
 }
 
 // ensureBucket creates the bucket if it doesn't exist

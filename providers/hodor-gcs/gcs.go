@@ -15,45 +15,48 @@ import (
 	"zbz/hodor"
 )
 
-// gcsStorage implements BucketService interface using Google Cloud Storage
+// gcsStorage implements HodorProvider interface using Google Cloud Storage
 type gcsStorage struct {
 	client     *storage.Client
 	bucketName string
 	ctx        context.Context
 }
 
-// NewGCSProvider creates a new GCS-based storage provider
-func NewGCSProvider() hodor.BucketService {
-	projectID := os.Getenv("ZBZ_GCS_PROJECT_ID")
-	if projectID == "" {
-		projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	}
-	
-	bucketName := os.Getenv("ZBZ_GCS_BUCKET")
+// NewGCSStorage creates a GCS storage contract with type-safe native client access
+// Returns a contract that can be registered as the global singleton or used independently
+// Example:
+//   contract := hodorgcs.NewGCSStorage(config)
+//   contract.Register()  // Register as global singleton
+//   gcsClient := contract.Native()  // Get *storage.Client without casting
+func NewGCSStorage(config hodor.HodorConfig) (*hodor.HodorContract[*storage.Client], error) {
+	// Apply defaults
+	bucketName := config.Bucket
 	if bucketName == "" {
 		bucketName = "zbz-storage"
 	}
 
 	ctx := context.Background()
 	
-	// Create GCS client (automatically uses service account or ADC)
+	// Create GCS client with optional credentials
 	client, err := storage.NewClient(ctx)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to create GCS client: %v", err))
+		return nil, fmt.Errorf("failed to create GCS client: %w", err)
 	}
 
-	gcss := &gcsStorage{
+	// Create provider wrapper
+	provider := &gcsStorage{
 		client:     client,
 		bucketName: bucketName,
 		ctx:        ctx,
 	}
 	
 	// Ensure bucket exists
-	if err := gcss.ensureBucket(); err != nil {
-		panic(fmt.Sprintf("Failed to ensure bucket exists: %v", err))
+	if err := provider.ensureBucket(); err != nil {
+		return nil, fmt.Errorf("failed to ensure bucket exists: %w", err)
 	}
 
-	return gcss
+	// Create and return contract
+	return hodor.NewContract("gcs", provider, client, config), nil
 }
 
 // ensureBucket creates the bucket if it doesn't exist

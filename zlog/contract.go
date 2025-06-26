@@ -2,41 +2,50 @@ package zlog
 
 // No imports needed for the simple contract
 
-// ZlogContract defines the contract that provides both interfaces
+// ZlogContract provides type-safe access to logging with native client type T
+// Each contract is an INDEPENDENT instance that can register itself as the singleton
 type ZlogContract[T any] struct {
 	name     string
-	service  ZlogService
-	provider ZlogProvider
-	logger   T
+	provider ZlogProvider // The wrapper that implements our interface
+	native   T            // The typed native client
+	config   ZlogConfig   // Configuration for this logger
 }
 
-// NewContract creates a new contract with service and typed logger
-func NewContract[T any](name string, provider ZlogProvider, logger T) *ZlogContract[T] {
+// NewContract creates a typed zlog contract with native client
+// This is used by provider packages to create contracts
+func NewContract[T any](name string, provider ZlogProvider, native T, config ZlogConfig) *ZlogContract[T] {
 	return &ZlogContract[T]{
 		name:     name,
-		service:  NewZlogService(provider),
 		provider: provider,
-		logger:   logger,
+		native:   native,
+		config:   config,
 	}
 }
 
-// Zlog returns the service interface for internal ZBZ services
-// Self-registers as global singleton if this contract isn't already active
-func (c *ZlogContract[T]) Zlog() ZlogService {
-	// Check if global singleton came from this contract
-	if zlog != nil && zlog.contract == c.name {
-		return zlog  // Return existing singleton
-	}
-	
-	// Different contract - self-register
-	Configure(c.provider)    // Configure with this contract's provider
-	zlog.contract = c.name   // Track which contract created this
-	return zlog              // Return updated singleton
+// Register registers this contract as the global zlog singleton
+// If a different contract is already registered, it will be replaced
+func (c *ZlogContract[T]) Register() error {
+	return configureFromContract(c.name, c.provider, c.config)
 }
 
-// Logger returns the typed logger for direct user access
-func (c *ZlogContract[T]) Logger() T {
-	return c.logger
+// Native returns the typed native client without any casting
+func (c *ZlogContract[T]) Native() T {
+	return c.native
+}
+
+// Provider returns the zlog provider wrapper
+func (c *ZlogContract[T]) Provider() ZlogProvider {
+	return c.provider
+}
+
+// Name returns the contract name
+func (c *ZlogContract[T]) Name() string {
+	return c.name
+}
+
+// Config returns the zlog configuration
+func (c *ZlogContract[T]) Config() ZlogConfig {
+	return c.config
 }
 
 // Register sets this contract as the global singleton

@@ -160,6 +160,7 @@ func SyncWithHandlers[T any](contract *hodor.HodorContract, key string, handlers
 	return Sync(contract, key, callback, options...)
 }
 
+
 // selectParserForKey chooses the appropriate parser based on type T and key extension
 func selectParserForKey[T any](key string) (func([]byte) (any, error), error) {
 	ext := strings.ToLower(filepath.Ext(key))

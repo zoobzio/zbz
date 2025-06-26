@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 	
-	"zbz/internal/storage"
+	"zbz/hodor"
 )
 
 // memoryItem represents a stored item with TTL
@@ -15,17 +15,25 @@ type memoryItem struct {
 	expiresAt time.Time
 }
 
-// memoryStorage implements StorageService interface using in-memory storage
+// memoryStorage implements HodorProvider interface using in-memory storage
 type memoryStorage struct {
 	items map[string]*memoryItem
 	mu    sync.RWMutex
 }
 
-// NewMemoryProvider creates a new memory-based storage provider
-func NewMemoryProvider() storage.StorageService {
-	return &memoryStorage{
+// NewMemoryStorage creates a memory storage contract with type-safe native client access
+// Returns a contract that can be registered as the global singleton or used independently
+// Example:
+//   contract := hodormemory.NewMemoryStorage(config)
+//   contract.Register()  // Register as global singleton
+//   memStorage := contract.Native()  // Get *memoryStorage without casting
+func NewMemoryStorage(config hodor.HodorConfig) (*hodor.HodorContract[*memoryStorage], error) {
+	provider := &memoryStorage{
 		items: make(map[string]*memoryItem),
 	}
+	
+	// Create and return contract
+	return hodor.NewContract("memory", provider, provider, config), nil
 }
 
 // Get retrieves data by key

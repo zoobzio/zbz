@@ -1,250 +1,229 @@
 package docula
 
-// OpenAPIInfo represents the metadata for an OpenAPI specification
-type OpenAPIInfo struct {
-	Title          string          `yaml:"title"`
-	Summary        string          `yaml:"summary,omitempty"`
-	Description    string          `yaml:"description,omitempty"`
-	Version        string          `yaml:"version"`
-	TermsOfService string          `yaml:"termsOfService,omitempty"`
-	Contact        *OpenAPIContact `yaml:"contact,omitempty"`
-	License        *OpenAPILicense `yaml:"license,omitempty"`
-}
+import (
+	"encoding/json"
 
-// OpenAPIContact represents contact information
-type OpenAPIContact struct {
-	Name  string `yaml:"name,omitempty"`
-	URL   string `yaml:"url,omitempty"`
-	Email string `yaml:"email,omitempty"`
-}
+	"gopkg.in/yaml.v2"
+)
 
-// OpenAPILicense represents license information
-type OpenAPILicense struct {
-	Name       string `yaml:"name,omitempty"`
-	Identifier string `yaml:"identifier,omitempty"`
-	URL        string `yaml:"url,omitempty"`
-}
-
-// OpenAPISchema represents a schema in an OpenAPI specification
-type OpenAPISchema struct {
-	Type                 string                    `yaml:"type,omitempty"`
-	Format               string                    `yaml:"format,omitempty"`
-	Description          string                    `yaml:"description,omitempty"`
-	Ref                  string                    `yaml:"$ref,omitempty"`
-	Required             []string                  `yaml:"required,omitempty"`
-	Properties           map[string]*OpenAPISchema `yaml:"properties,omitempty"`
-	Example              any                       `yaml:"example,omitempty"`
-	AdditionalProperties *OpenAPISchema            `yaml:"additionalProperties,omitempty"`
-	
-	// OpenAPI 3.1.0 / JSON Schema 2020-12 enhancements
-	Const       any                  `yaml:"const,omitempty"`
-	AnyOf       []*OpenAPISchema     `yaml:"anyOf,omitempty"`
-	OneOf       []*OpenAPISchema     `yaml:"oneOf,omitempty"`
-	Not         *OpenAPISchema       `yaml:"not,omitempty"`
-	If          *OpenAPISchema       `yaml:"if,omitempty"`
-	Then        *OpenAPISchema       `yaml:"then,omitempty"`
-	Else        *OpenAPISchema       `yaml:"else,omitempty"`
-	
-	// Validation keywords
-	Minimum          *float64 `yaml:"minimum,omitempty"`
-	Maximum          *float64 `yaml:"maximum,omitempty"`
-	ExclusiveMinimum *float64 `yaml:"exclusiveMinimum,omitempty"`
-	ExclusiveMaximum *float64 `yaml:"exclusiveMaximum,omitempty"`
-	MultipleOf       *float64 `yaml:"multipleOf,omitempty"`
-	MinLength        *int     `yaml:"minLength,omitempty"`
-	MaxLength        *int     `yaml:"maxLength,omitempty"`
-	Pattern          string   `yaml:"pattern,omitempty"`
-	MinItems         *int     `yaml:"minItems,omitempty"`
-	MaxItems         *int     `yaml:"maxItems,omitempty"`
-	UniqueItems      bool     `yaml:"uniqueItems,omitempty"`
-	MinProperties    *int     `yaml:"minProperties,omitempty"`
-	MaxProperties    *int     `yaml:"maxProperties,omitempty"`
-	
-	// Array/Object types
-	Items    *OpenAPISchema `yaml:"items,omitempty"`
-	Contains *OpenAPISchema `yaml:"contains,omitempty"`
-	
-	// String enums
-	Enum []any `yaml:"enum,omitempty"`
-	
-	// Deprecated flag
-	Deprecated bool `yaml:"deprecated,omitempty"`
-}
-
-// OpenAPIParameter represents a parameter in an OpenAPI specification
-type OpenAPIParameter struct {
-	Name            string         `yaml:"name"`
-	In              string         `yaml:"in"`
-	Description     string         `yaml:"description,omitempty"`
-	Required        bool           `yaml:"required,omitempty"`
-	Deprecated      bool           `yaml:"deprecated,omitempty"`
-	AllowEmptyValue bool           `yaml:"allowEmptyValue,omitempty"`
-	Schema          *OpenAPISchema `yaml:"schema,omitempty"`
-	Example         any            `yaml:"example,omitempty"`
-}
-
-// OpenAPIRequestBody represents a request body in an OpenAPI specification
-type OpenAPIRequestBody struct {
-	Description string                       `yaml:"description,omitempty"`
-	Content     map[string]*OpenAPIMediaType `yaml:"content"`
-	Required    bool                         `yaml:"required,omitempty"`
-}
-
-// OpenAPIMediaType represents a media type in an OpenAPI specification
-type OpenAPIMediaType struct {
-	Schema   *OpenAPISchema `yaml:"schema,omitempty"`
-	Example  any            `yaml:"example,omitempty"`
-	Examples map[string]any `yaml:"examples,omitempty"`
-}
-
-// OpenAPIResponse represents a response in an OpenAPI specification
-type OpenAPIResponse struct {
-	Description string                       `yaml:"description"`
-	Headers     map[string]*OpenAPIHeader    `yaml:"headers,omitempty"`
-	Content     map[string]*OpenAPIMediaType `yaml:"content,omitempty"`
-	Links       map[string]*OpenAPILink      `yaml:"links,omitempty"`
-}
-
-// OpenAPIHeader represents a header in an OpenAPI specification
-type OpenAPIHeader struct {
-	Description     string         `yaml:"description,omitempty"`
-	Required        bool           `yaml:"required,omitempty"`
-	Deprecated      bool           `yaml:"deprecated,omitempty"`
-	AllowEmptyValue bool           `yaml:"allowEmptyValue,omitempty"`
-	Schema          *OpenAPISchema `yaml:"schema,omitempty"`
-	Example         any            `yaml:"example,omitempty"`
-}
-
-// OpenAPILink represents a link in an OpenAPI specification
-type OpenAPILink struct {
-	OperationRef string            `yaml:"operationRef,omitempty"`
-	OperationId  string            `yaml:"operationId,omitempty"`
-	Parameters   map[string]any    `yaml:"parameters,omitempty"`
-	RequestBody  any               `yaml:"requestBody,omitempty"`
-	Description  string            `yaml:"description,omitempty"`
-	Server       *OpenAPIServer    `yaml:"server,omitempty"`
-}
-
-// OpenAPITag represents a tag in an OpenAPI specification
-type OpenAPITag struct {
-	Name         string                `yaml:"name"`
-	Description  string                `yaml:"description,omitempty"`
-	ExternalDocs *OpenAPIExternalDocs  `yaml:"externalDocs,omitempty"`
-}
-
-// OpenAPIExternalDocs represents external documentation
-type OpenAPIExternalDocs struct {
-	Description string `yaml:"description,omitempty"`
-	URL         string `yaml:"url"`
-}
-
-// OpenAPISecurityScheme represents a security scheme
-type OpenAPISecurityScheme struct {
-	Type             string            `yaml:"type"`
-	Description      string            `yaml:"description,omitempty"`
-	Name             string            `yaml:"name,omitempty"`
-	In               string            `yaml:"in,omitempty"`
-	Scheme           string            `yaml:"scheme,omitempty"`
-	BearerFormat     string            `yaml:"bearerFormat,omitempty"`
-	Flows            *OpenAPIOAuthFlows `yaml:"flows,omitempty"`
-	OpenIdConnectUrl string            `yaml:"openIdConnectUrl,omitempty"`
-}
-
-// OpenAPIOAuthFlows represents OAuth flows
-type OpenAPIOAuthFlows struct {
-	Implicit          *OpenAPIOAuthFlow `yaml:"implicit,omitempty"`
-	Password          *OpenAPIOAuthFlow `yaml:"password,omitempty"`
-	ClientCredentials *OpenAPIOAuthFlow `yaml:"clientCredentials,omitempty"`
-	AuthorizationCode *OpenAPIOAuthFlow `yaml:"authorizationCode,omitempty"`
-}
-
-// OpenAPIOAuthFlow represents a single OAuth flow
-type OpenAPIOAuthFlow struct {
-	AuthorizationUrl string            `yaml:"authorizationUrl,omitempty"`
-	TokenUrl         string            `yaml:"tokenUrl,omitempty"`
-	RefreshUrl       string            `yaml:"refreshUrl,omitempty"`
-	Scopes          map[string]string `yaml:"scopes"`
-}
-
-// OpenAPIComponents represents the components section
-type OpenAPIComponents struct {
-	Schemas         map[string]*OpenAPISchema         `yaml:"schemas,omitempty"`
-	Responses       map[string]*OpenAPIResponse       `yaml:"responses,omitempty"`
-	Parameters      map[string]*OpenAPIParameter      `yaml:"parameters,omitempty"`
-	Examples        map[string]*OpenAPIExample        `yaml:"examples,omitempty"`
-	RequestBodies   map[string]*OpenAPIRequestBody    `yaml:"requestBodies,omitempty"`
-	Headers         map[string]*OpenAPIHeader         `yaml:"headers,omitempty"`
-	SecuritySchemes map[string]*OpenAPISecurityScheme `yaml:"securitySchemes,omitempty"`
-	Links           map[string]*OpenAPILink           `yaml:"links,omitempty"`
-	Callbacks       map[string]*OpenAPICallback       `yaml:"callbacks,omitempty"`
-}
-
-// OpenAPIExample represents an example
-type OpenAPIExample struct {
-	Summary       string `yaml:"summary,omitempty"`
-	Description   string `yaml:"description,omitempty"`
-	Value         any    `yaml:"value,omitempty"`
-	ExternalValue string `yaml:"externalValue,omitempty"`
-}
-
-// OpenAPICallback represents a callback
-type OpenAPICallback map[string]*OpenAPIPathItem
-
-// OpenAPIPathItem represents a path item
-type OpenAPIPathItem struct {
-	Ref         string              `yaml:"$ref,omitempty"`
-	Summary     string              `yaml:"summary,omitempty"`
-	Description string              `yaml:"description,omitempty"`
-	Get         *OpenAPIOperation   `yaml:"get,omitempty"`
-	Put         *OpenAPIOperation   `yaml:"put,omitempty"`
-	Post        *OpenAPIOperation   `yaml:"post,omitempty"`
-	Delete      *OpenAPIOperation   `yaml:"delete,omitempty"`
-	Options     *OpenAPIOperation   `yaml:"options,omitempty"`
-	Head        *OpenAPIOperation   `yaml:"head,omitempty"`
-	Patch       *OpenAPIOperation   `yaml:"patch,omitempty"`
-	Trace       *OpenAPIOperation   `yaml:"trace,omitempty"`
-	Servers     []*OpenAPIServer    `yaml:"servers,omitempty"`
-	Parameters  []*OpenAPIParameter `yaml:"parameters,omitempty"`
-}
-
-// OpenAPIOperation represents an operation
-type OpenAPIOperation struct {
-	Tags         []string                         `yaml:"tags,omitempty"`
-	Summary      string                           `yaml:"summary,omitempty"`
-	Description  string                           `yaml:"description,omitempty"`
-	ExternalDocs *OpenAPIExternalDocs             `yaml:"externalDocs,omitempty"`
-	OperationId  string                           `yaml:"operationId,omitempty"`
-	Parameters   []*OpenAPIParameter              `yaml:"parameters,omitempty"`
-	RequestBody  *OpenAPIRequestBody              `yaml:"requestBody,omitempty"`
-	Responses    map[string]*OpenAPIResponse      `yaml:"responses"`
-	Callbacks    map[string]*OpenAPICallback      `yaml:"callbacks,omitempty"`
-	Deprecated   bool                             `yaml:"deprecated,omitempty"`
-	Security     []map[string][]string            `yaml:"security,omitempty"`
-	Servers      []*OpenAPIServer                 `yaml:"servers,omitempty"`
-}
-
-// OpenAPIServer represents a server
-type OpenAPIServer struct {
-	URL         string                      `yaml:"url"`
-	Description string                      `yaml:"description,omitempty"`
-	Variables   map[string]*OpenAPIVariable `yaml:"variables,omitempty"`
-}
-
-// OpenAPIVariable represents a server variable
-type OpenAPIVariable struct {
-	Enum        []string `yaml:"enum,omitempty"`
-	Default     string   `yaml:"default"`
-	Description string   `yaml:"description,omitempty"`
-}
-
-// OpenAPISpec represents the root OpenAPI specification
+// OpenAPISpec represents a complete OpenAPI 3.1.0 specification
 type OpenAPISpec struct {
-	OpenAPI      string                            `yaml:"openapi"`
-	Info         *OpenAPIInfo                      `yaml:"info"`
-	Servers      []*OpenAPIServer                  `yaml:"servers,omitempty"`
-	Paths        map[string]*OpenAPIPathItem       `yaml:"paths,omitempty"`
-	Components   *OpenAPIComponents                `yaml:"components,omitempty"`
-	Security     []map[string][]string             `yaml:"security,omitempty"`
-	Tags         []*OpenAPITag                     `yaml:"tags,omitempty"`
-	ExternalDocs *OpenAPIExternalDocs              `yaml:"externalDocs,omitempty"`
+	OpenAPI string                       `json:"openapi" yaml:"openapi"`
+	Info    OpenAPIInfo                  `json:"info" yaml:"info"`
+	Paths   map[string]OpenAPIPath       `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Components *OpenAPIComponents       `json:"components,omitempty" yaml:"components,omitempty"`
+}
+
+// OpenAPIInfo contains API metadata
+type OpenAPIInfo struct {
+	Title       string `json:"title" yaml:"title"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Version     string `json:"version" yaml:"version"`
+}
+
+// OpenAPIPath represents an API path with operations
+type OpenAPIPath struct {
+	Get    *OpenAPIOperation `json:"get,omitempty" yaml:"get,omitempty"`
+	Post   *OpenAPIOperation `json:"post,omitempty" yaml:"post,omitempty"`
+	Put    *OpenAPIOperation `json:"put,omitempty" yaml:"put,omitempty"`
+	Delete *OpenAPIOperation `json:"delete,omitempty" yaml:"delete,omitempty"`
+}
+
+// OpenAPIOperation represents an API operation
+type OpenAPIOperation struct {
+	OperationID string `json:"operationId,omitempty" yaml:"operationId,omitempty"`
+	Summary     string `json:"summary,omitempty" yaml:"summary,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty" yaml:"tags,omitempty"`
+}
+
+// OpenAPIComponents contains reusable components
+type OpenAPIComponents struct {
+	Schemas map[string]OpenAPISchema `json:"schemas,omitempty" yaml:"schemas,omitempty"`
+}
+
+// OpenAPISchema represents a data schema
+type OpenAPISchema struct {
+	Type        string                       `json:"type,omitempty" yaml:"type,omitempty"`
+	Description string                       `json:"description,omitempty" yaml:"description,omitempty"`
+	Properties  map[string]OpenAPISchema     `json:"properties,omitempty" yaml:"properties,omitempty"`
+	Required    []string                     `json:"required,omitempty" yaml:"required,omitempty"`
+}
+
+// SpecGenerator manages OpenAPI spec generation and caching
+type SpecGenerator struct {
+	spec        *OpenAPISpec
+	processor   *MarkdownProcessor
+	
+	// Simple cache
+	cachedYAML  []byte
+	cachedJSON  []byte
+}
+
+// NewSpecGenerator creates a new OpenAPI spec generator
+func NewSpecGenerator() *SpecGenerator {
+	return &SpecGenerator{
+		spec: &OpenAPISpec{
+			OpenAPI: "3.1.0",
+			Info: OpenAPIInfo{
+				Title:   "API Documentation",
+				Version: "1.0.0",
+			},
+			Paths:      make(map[string]OpenAPIPath),
+			Components: &OpenAPIComponents{
+				Schemas: make(map[string]OpenAPISchema),
+			},
+		},
+		processor: NewMarkdownProcessor(),
+	}
+}
+
+// RegisterEndpoint adds an endpoint to the OpenAPI spec
+func (sg *SpecGenerator) RegisterEndpoint(method, path, operationID, summary, description string) {
+	if sg.spec.Paths == nil {
+		sg.spec.Paths = make(map[string]OpenAPIPath)
+	}
+	
+	operation := &OpenAPIOperation{
+		OperationID: operationID,
+		Summary:     summary,
+		Description: description,
+		Tags:        []string{"api"},
+	}
+	
+	pathItem := sg.spec.Paths[path]
+	switch method {
+	case "GET":
+		pathItem.Get = operation
+	case "POST":
+		pathItem.Post = operation
+	case "PUT":
+		pathItem.Put = operation
+	case "DELETE":
+		pathItem.Delete = operation
+	}
+	
+	sg.spec.Paths[path] = pathItem
+	sg.clearCache()
+}
+
+// RegisterModel adds a model schema to the OpenAPI spec
+func (sg *SpecGenerator) RegisterModel(name, description string) {
+	if sg.spec.Components == nil {
+		sg.spec.Components = &OpenAPIComponents{
+			Schemas: make(map[string]OpenAPISchema),
+		}
+	}
+	
+	sg.spec.Components.Schemas[name] = OpenAPISchema{
+		Type:        "object",
+		Description: description,
+		Properties: map[string]OpenAPISchema{
+			"id": {
+				Type:        "string",
+				Description: "Unique identifier",
+			},
+			"created_at": {
+				Type:        "string",
+				Description: "Creation timestamp",
+			},
+		},
+		Required: []string{"id"},
+	}
+	
+	sg.clearCache()
+}
+
+// EnhanceWithMarkdown updates the spec with markdown content
+func (sg *SpecGenerator) EnhanceWithMarkdown(pages map[string]*DocPage) {
+	// Update API description from api.md
+	if apiPage, exists := pages["api.md"]; exists {
+		sg.spec.Info.Description = sg.processor.ProcessForAPI([]byte(apiPage.Content))
+	}
+	
+	// Enhance operations with {operationId}.md files
+	for path, pathItem := range sg.spec.Paths {
+		if pathItem.Get != nil {
+			sg.enhanceOperation(pathItem.Get, pages)
+		}
+		if pathItem.Post != nil {
+			sg.enhanceOperation(pathItem.Post, pages)
+		}
+		if pathItem.Put != nil {
+			sg.enhanceOperation(pathItem.Put, pages)
+		}
+		if pathItem.Delete != nil {
+			sg.enhanceOperation(pathItem.Delete, pages)
+		}
+		sg.spec.Paths[path] = pathItem
+	}
+	
+	// Enhance schemas with {model}.md files
+	for modelName, schema := range sg.spec.Components.Schemas {
+		if modelPage, exists := pages[modelName+".md"]; exists {
+			schema.Description = sg.processor.ProcessForAPI([]byte(modelPage.Content))
+			sg.spec.Components.Schemas[modelName] = schema
+		}
+	}
+	
+	sg.clearCache()
+}
+
+// enhanceOperation updates an operation with markdown content
+func (sg *SpecGenerator) enhanceOperation(operation *OpenAPIOperation, pages map[string]*DocPage) {
+	if operation.OperationID == "" {
+		return
+	}
+	
+	// Look for {operationId}.md file
+	if opPage, exists := pages[operation.OperationID+".md"]; exists {
+		operation.Description = sg.processor.ProcessForAPI([]byte(opPage.Content))
+		if opPage.Title != "" {
+			operation.Summary = opPage.Title
+		}
+	}
+}
+
+// GetYAML returns the cached YAML representation
+func (sg *SpecGenerator) GetYAML() ([]byte, error) {
+	if sg.cachedYAML != nil {
+		return sg.cachedYAML, nil
+	}
+	
+	yamlData, err := yaml.Marshal(sg.spec)
+	if err != nil {
+		return nil, err
+	}
+	
+	sg.cachedYAML = yamlData
+	return yamlData, nil
+}
+
+// GetJSON returns the cached JSON representation
+func (sg *SpecGenerator) GetJSON() ([]byte, error) {
+	if sg.cachedJSON != nil {
+		return sg.cachedJSON, nil
+	}
+	
+	jsonData, err := json.MarshalIndent(sg.spec, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	
+	sg.cachedJSON = jsonData
+	return jsonData, nil
+}
+
+// clearCache invalidates the cached representations
+func (sg *SpecGenerator) clearCache() {
+	sg.cachedYAML = nil
+	sg.cachedJSON = nil
+}
+
+// SetInfo updates the API info
+func (sg *SpecGenerator) SetInfo(title, description, version string) {
+	sg.spec.Info.Title = title
+	sg.spec.Info.Description = description
+	sg.spec.Info.Version = version
+	sg.clearCache()
 }

@@ -1,113 +1,154 @@
 package hodor
 
 import (
-	"fmt"
-	"gopkg.in/yaml.v3"
+	"time"
 )
 
-// Public API functions following the zlog/flux pattern
-// These work with the global hodor singleton for contract registry
+// Public API functions that delegate to the singleton service (like cache pattern)
 
-// RegisterContract registers a contract created by providers
-func RegisterContract(alias string, provider HodorProvider) error {
-	return hodor.RegisterContract(alias, provider)
+// Storage operations that use the global singleton
+
+// Get retrieves data from the singleton storage
+func Get(key string) ([]byte, error) {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Get(key)
 }
 
-// Unregister removes a contract from the registry
-func Unregister(alias string) error {
-	return hodor.Unregister(alias)
+// Set stores data in the singleton storage
+func Set(key string, data []byte, ttl time.Duration) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Set(key, data, ttl)
 }
 
-// List returns information about all registered contracts
-func List() []ContractInfo {
-	return hodor.List()
+// Delete removes data from the singleton storage
+func Delete(key string) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Delete(key)
 }
 
-// Status returns the status of a specific contract
-func Status(alias string) (ContractStatus, error) {
-	return hodor.Status(alias)
+// Exists checks if a key exists in the singleton storage
+func Exists(key string) (bool, error) {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Exists(key)
 }
 
-// Close shuts down all contracts and cleans up
+// List returns keys with the given prefix from singleton storage
+func List(prefix string) ([]string, error) {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.List(prefix)
+}
+
+// Stat returns file information from singleton storage
+func Stat(key string) (FileInfo, error) {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Stat(key)
+}
+
+// Subscribe to changes for a specific key in singleton storage
+func Subscribe(key string, callback ChangeCallback) (SubscriptionID, error) {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Subscribe(key, callback)
+}
+
+// Unsubscribe from changes in singleton storage
+func Unsubscribe(id SubscriptionID) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.provider.Unsubscribe(id)
+}
+
+// Metadata operations using cereal serialization
+
+// SetWithMetadata stores data with structured metadata using cereal
+func SetWithMetadata(key string, data []byte, metadata interface{}) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.setWithMetadata(key, data, metadata)
+}
+
+// GetWithMetadata retrieves data and deserializes metadata using cereal
+func GetWithMetadata(key string, metadata interface{}) ([]byte, error) {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.getWithMetadata(key, metadata)
+}
+
+// SetJSON stores a JSON object using cereal serialization
+func SetJSON(key string, object interface{}) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.setJSON(key, object)
+}
+
+// GetJSON retrieves and deserializes a JSON object using cereal
+func GetJSON(key string, target interface{}) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.getJSON(key, target)
+}
+
+// SetJSONScoped stores a JSON object with field-level scoping
+func SetJSONScoped(key string, object interface{}, userPermissions []string) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.setJSONScoped(key, object, userPermissions)
+}
+
+// GetJSONScoped retrieves and deserializes a JSON object with scoping
+func GetJSONScoped(key string, target interface{}, userPermissions []string) error {
+	if hodor == nil {
+		panic("hodor not configured - create and register a contract first")
+	}
+	return hodor.getJSONScoped(key, target, userPermissions)
+}
+
+// Service management functions
+
+// Provider returns the current hodor provider
+func Provider() HodorProvider {
+	if hodor == nil {
+		return nil
+	}
+	return hodor.provider
+}
+
+// Config returns the current hodor configuration
+func Config() HodorConfig {
+	if hodor == nil {
+		return HodorConfig{}
+	}
+	return hodor.config
+}
+
+// IsConfigured returns true if the hodor service has been configured
+func IsConfigured() bool {
+	return hodor != nil
+}
+
+// Close shuts down the hodor service
 func Close() error {
+	if hodor == nil {
+		return nil
+	}
 	return hodor.Close()
-}
-
-// Helper functions for working with specific mounts
-
-// GetContract returns contract information
-func GetContract(alias string) (ContractInfo, error) {
-	// Check if contract exists
-	status, err := hodor.Status(alias)
-	if err != nil {
-		return ContractInfo{}, err
-	}
-	
-	if status.State != ContractStateActive {
-		return ContractInfo{}, fmt.Errorf("contract '%s' is not active (state: %s)", alias, status.State)
-	}
-	
-	// Find the contract in hodor's registry
-	hodor.mu.RLock()
-	contract, exists := hodor.contracts[alias]
-	hodor.mu.RUnlock()
-	
-	if !exists {
-		return ContractInfo{}, fmt.Errorf("contract '%s' not found in registry", alias)
-	}
-	
-	return ContractInfo{
-		Alias:     contract.alias,
-		Provider:  contract.provider.GetProvider(),
-		Status:    string(contract.status.State),
-		CreatedAt: contract.createdAt,
-	}, nil
-}
-
-// QuickMemory creates and registers a memory storage contract
-func QuickMemory(alias string) (*HodorContract, error) {
-	contract := NewMemory(map[string]interface{}{})
-	err := contract.Register(alias)
-	return contract, err
-}
-
-// HodorProviderConfig provides common configuration for all providers
-type HodorProviderConfig struct {
-	Provider string                 `yaml:"provider"` // s3, gcs, azure, minio, etc.
-	Config   map[string]interface{} `yaml:"config"`   // Provider-specific config
-}
-
-// RegisterWithYAML registers storage using YAML configuration (legacy)
-func RegisterWithYAML(alias string, yamlConfig []byte) (*HodorContract, error) {
-	// Parse YAML config
-	var config HodorProviderConfig
-	err := yaml.Unmarshal(yamlConfig, &config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
-	}
-	
-	// Only memory provider supported in legacy mode
-	if config.Provider == "memory" {
-		contract := NewMemory(config.Config)
-		err = contract.Register(alias)
-		return contract, err
-	}
-	
-	return nil, fmt.Errorf("provider '%s' not supported in legacy YAML mode", config.Provider)
-}
-
-// IsAvailable checks if a provider is available
-func IsAvailable(provider string) bool {
-	providers := ListStorageProviders()
-	for _, p := range providers {
-		if p == provider {
-			return true
-		}
-	}
-	return false
-}
-
-// Providers returns a list of available storage providers
-func Providers() []string {
-	return ListStorageProviders()
 }

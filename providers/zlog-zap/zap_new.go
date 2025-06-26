@@ -1,6 +1,7 @@
 package zap
 
 import (
+	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -14,15 +15,14 @@ type zapProvider struct {
 	logger *zap.Logger
 }
 
-// NewWithHodor creates a new zap-based contract with hodor storage support
-// This is the ONLY constructor - enforces explicit hodor usage for file storage
-func NewWithHodor(config Config, hodorContract *zlog.HodorContract) *zlog.ZlogContract[*zap.Logger] {
-	// Validate input
-	if hodorContract == nil {
-		panic("zap adapter requires hodor contract for file storage - use console-only simple provider instead")
-	}
-
-	// Apply defaults using universal services
+// NewZapLogger creates a zap logger contract with type-safe native client access
+// Returns a contract that can be registered as the global singleton or used independently
+// Example:
+//   contract := zlogzap.NewZapLogger(config)
+//   contract.Register()  // Register as global singleton
+//   zapLogger := contract.Native()  // Get *zap.Logger without casting
+func NewZapLogger(config zlog.ZlogConfig) (*zlog.ZlogContract[*zap.Logger], error) {
+	// Apply defaults
 	if config.Level == "" {
 		config.Level = "info"
 	}
@@ -33,50 +33,68 @@ func NewWithHodor(config Config, hodorContract *zlog.HodorContract) *zlog.ZlogCo
 		config.Name = "zap-logger"
 	}
 
-	// Parse level using universal service
-	level := zlog.ParseLevel(config.Level)
-	zapLevel := zlog.ConvertLevel(level).ToZapLevel().(zapcore.Level)
+	// Parse level
+	zapLevel, err := zapcore.ParseLevel(config.Level)
+	if err != nil {
+		return nil, err
+	}
 
-	// Get provider-specific format
-	formatConverter := zlog.GetFormatConverter()
-	zapFormat := formatConverter.GetProviderFormat(config.Format, "zap")
+	// Create encoder config
+	var encoderConfig zapcore.EncoderConfig
+	if config.Development {
+		encoderConfig = zap.NewDevelopmentEncoderConfig()
+	} else {
+		encoderConfig = zap.NewProductionEncoderConfig()
+	}
 
-	// Create universal writer (console + hodor)
-	keyPrefix := config.Name + "-logs"
-	writer := zlog.CreateStandardWriter(config.Format, *hodorContract, keyPrefix)
+	// Create encoder based on format
+	var encoder zapcore.Encoder
+	switch config.Format {
+	case "console":
+		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+	default: // "json"
+		encoder = zapcore.NewJSONEncoder(encoderConfig)
+	}
 
-	// Create zap-specific encoder
-	encoder := createZapEncoder(zapFormat)
+	// Create output syncer
+	var syncer zapcore.WriteSyncer
+	if config.OutputFile != "" {
+		// File output - simple implementation
+		file, err := os.OpenFile(config.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			return nil, err
+		}
+		syncer = zapcore.AddSync(file)
+	} else {
+		// Console output
+		syncer = zapcore.Lock(os.Stdout)
+	}
 
-	// Create zapcore.WriteSyncer from universal writer
-	syncer := zapcore.AddSync(writer)
-
-	// Create single core with universal writer
+	// Create core
 	core := zapcore.NewCore(encoder, syncer, zapLevel)
 
-	// Apply sampling if configured (universal sampling could be added later)
+	// Apply sampling if configured
 	if config.Sampling != nil {
 		core = zapcore.NewSamplerWithOptions(
 			core,
-			time.Second, // Sample per second
+			time.Second,
 			config.Sampling.Initial,
 			config.Sampling.Thereafter,
 		)
 	}
 
 	// Create zap logger
-	zapLog := zap.New(core,
+	zapLogger := zap.New(core, 
 		zap.AddCaller(),
-		zap.AddCallerSkip(3), // Skip: zapProvider.Info() -> zZlogService.Info() -> zlog.Info() -> user code
 		zap.AddStacktrace(zap.ErrorLevel))
 
-	// Create provider
+	// Create provider wrapper
 	provider := &zapProvider{
-		logger: zapLog,
+		logger: zapLogger,
 	}
 
-	// Return contract with both service and typed logger
-	return zlog.NewContract[*zap.Logger](config.Name, provider, zapLog)
+	// Create and return contract
+	return zlog.NewContract[*zap.Logger](config.Name, provider, zapLogger, config), nil
 }
 
 // Info logs at info level

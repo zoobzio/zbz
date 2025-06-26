@@ -16,8 +16,13 @@ type zerologProvider struct {
 	logger zerolog.Logger
 }
 
-// New creates a new zerolog-based contract with the provided configuration
-func New(config Config) *zlog.ZlogContract[*zerolog.Logger] {
+// NewZerologLogger creates a zerolog logger contract with type-safe native client access
+// Returns a contract that can be registered as the global singleton or used independently
+// Example:
+//   contract := zerologprovider.NewZerologLogger(config)
+//   contract.Register()  // Register as global singleton
+//   zerologLogger := contract.Native()  // Get *zerolog.Logger without casting
+func NewZerologLogger(config zlog.ZlogConfig) (*zlog.ZlogContract[*zerolog.Logger], error) {
 	// Apply defaults
 	if config.Level == "" {
 		config.Level = "info"
@@ -37,7 +42,7 @@ func New(config Config) *zlog.ZlogContract[*zerolog.Logger] {
 	// If no outputs specified, default to console only
 	// File outputs will be ignored unless hodor contract is set later
 	if len(config.Outputs) == 0 {
-		config.Outputs = []OutputConfig{
+		config.Outputs = []zlog.OutputConfig{
 			{Type: "console", Level: config.Level, Format: config.Format},
 		}
 	}
@@ -74,13 +79,13 @@ func New(config Config) *zlog.ZlogContract[*zerolog.Logger] {
 		logger = logger.Sample(&zerolog.BasicSampler{N: uint32(config.Sampling.Thereafter)})
 	}
 
-	// Create provider
+	// Create provider wrapper
 	provider := &zerologProvider{
 		logger: logger,
 	}
 
-	// Return contract with both service and typed logger
-	return zlog.NewContract[*zerolog.Logger](config.Name, provider, &logger)
+	// Create and return contract
+	return zlog.NewContract[*zerolog.Logger](config.Name, provider, &logger, config), nil
 }
 
 // Info logs at info level
@@ -160,7 +165,7 @@ func (z *zerologProvider) addFieldsToEvent(event *zerolog.Event, fields []zlog.F
 }
 
 // createWriter creates an io.Writer for a specific output configuration
-func createWriter(output OutputConfig, globalFormat string) io.Writer {
+func createWriter(output zlog.OutputConfig, globalFormat string) io.Writer {
 	format := output.Format
 	if format == "" {
 		format = globalFormat

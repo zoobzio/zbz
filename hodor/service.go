@@ -2,9 +2,9 @@ package hodor
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
+	"zbz/cereal"
 	"zbz/zlog"
 )
 
@@ -46,178 +46,233 @@ type HodorProvider interface {
 // Private concrete hodor instance
 var hodor *zHodor
 
-// HodorService defines the interface for storage contract registry
-// Service manages contract registration and discovery
-type HodorService interface {
-	// Register a contract (called by contracts)
-	RegisterContract(alias string, provider HodorProvider) error
+// HodorConfig defines provider-agnostic hodor configuration
+type HodorConfig struct {
+	// Service configuration
+	BasePath    string        `yaml:"base_path" json:"base_path"`
+	BufferSize  int64         `yaml:"buffer_size" json:"buffer_size"`
+	DefaultTTL  time.Duration `yaml:"default_ttl" json:"default_ttl"`
 	
-	// Unregister contract
-	Unregister(alias string) error
+	// Cloud provider settings (S3/GCS/MinIO)
+	Bucket    string `yaml:"bucket" json:"bucket"`
+	Region    string `yaml:"region" json:"region"`
+	AccessKey string `yaml:"access_key" json:"access_key"`
+	SecretKey string `yaml:"secret_key" json:"secret_key"`
+	Endpoint  string `yaml:"endpoint" json:"endpoint"` // For MinIO/custom S3
 	
-	// List all registered contracts
-	List() []ContractInfo
+	// Filesystem settings
+	BaseDir     string `yaml:"base_dir" json:"base_dir"`
+	Permissions int    `yaml:"permissions" json:"permissions"`
 	
-	// Get contract info
-	Status(alias string) (ContractStatus, error)
+	// Performance settings
+	MaxRetries int           `yaml:"max_retries" json:"max_retries"`
+	Timeout    time.Duration `yaml:"timeout" json:"timeout"`
 	
-	// Clean shutdown
-	Close() error
+	// Feature flags
+	EnableWatching bool `yaml:"enable_watching" json:"enable_watching"`
+	EnableSSL      bool `yaml:"enable_ssl" json:"enable_ssl"`
 }
 
-// zHodor implements the HodorService interface for contract registry
+// DefaultConfig returns sensible defaults
+func DefaultConfig() HodorConfig {
+	return HodorConfig{
+		BufferSize:     1024 * 1024, // 1MB
+		DefaultTTL:     0,            // No expiration
+		Permissions:    0644,
+		MaxRetries:     3,
+		Timeout:        30 * time.Second,
+		EnableWatching: true,
+	}
+}
+
+// zHodor is the singleton service layer that orchestrates storage operations
+// Like zlog/cache singletons, this manages provider abstraction + cereal metadata serialization
 type zHodor struct {
-	contracts map[string]*registeredContract // alias → registered contract
-	mu        sync.RWMutex                    // protects all state
+	provider     HodorProvider         // Backend provider wrapper
+	serializer   cereal.CerealProvider // Cereal handles metadata serialization
+	config       HodorConfig           // Service configuration
+	contractName string                // Name of the contract that created this singleton
 }
 
-// registeredContract represents a single registered storage contract
-type registeredContract struct {
-	alias     string
-	provider  HodorProvider
-	createdAt time.Time
-	status    ContractStatus
-}
-
-// ContractInfo provides information about a registered contract
-type ContractInfo struct {
-	Alias     string    `json:"alias"`
-	Provider  string    `json:"provider"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// ContractStatus represents the current state of a contract
-type ContractStatus struct {
-	State ContractState `json:"state"`
-	Error string        `json:"error,omitempty"`
-}
-
-// ContractState represents possible contract states
-type ContractState string
-
-const (
-	ContractStateActive      ContractState = "active"
-	ContractStateError       ContractState = "error"
-	ContractStateUnregistered ContractState = "unregistered"
-)
 
 
-// init automatically sets up the global hodor service
-func init() {
+// configureFromContract initializes the singleton from a contract's registration
+func configureFromContract(contractName string, provider HodorProvider, config HodorConfig) error {
+	// Check if we need to replace existing singleton
+	if hodor != nil && hodor.contractName != contractName {
+		zlog.Info("Replacing hodor singleton",
+			zlog.String("old_contract", hodor.contractName),
+			zlog.String("new_contract", contractName))
+		
+		// Close old provider
+		if err := hodor.provider.Close(); err != nil {
+			zlog.Warn("Failed to close old provider", zlog.Err(err))
+		}
+	} else if hodor != nil && hodor.contractName == contractName {
+		// Same contract, no need to replace
+		return nil
+	}
+
+	// Set up cereal serialization for metadata handling
+	cerealConfig := cereal.DefaultConfig()
+	cerealConfig.Name = "hodor-serializer"
+	cerealConfig.DefaultFormat = "json" // Use JSON for object metadata
+	cerealConfig.EnableCaching = true   // Cache metadata serialization for performance
+	cerealConfig.EnableScoping = true   // Enable scoped metadata for access control
+	
+	// Create JSON provider for metadata serialization
+	cerealContract := cereal.NewJSONProvider(cerealConfig)
+	cerealProvider := cerealContract.Provider()
+
+	// Create service singleton
 	hodor = &zHodor{
-		contracts: make(map[string]*registeredContract),
+		provider:     provider,
+		serializer:   cerealProvider, // Cereal handles metadata serialization
+		config:       config,
+		contractName: contractName,
 	}
-	zlog.Info("Initialized hodor service")
-}
 
-// RegisterContract registers a contract for service discovery
-func (h *zHodor) RegisterContract(alias string, provider HodorProvider) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	
-	// Check if alias already exists
-	if _, exists := h.contracts[alias]; exists {
-		return fmt.Errorf("contract alias '%s' already exists", alias)
-	}
-	
-	// Create registered contract record
-	contract := &registeredContract{
-		alias:     alias,
-		provider:  provider,
-		createdAt: time.Now(),
-		status: ContractStatus{
-			State: ContractStateActive,
-		},
-	}
-	
-	h.contracts[alias] = contract
-	
-	zlog.Info("Registered contract", 
-		zlog.String("alias", alias),
+	zlog.Info("Hodor service configured from contract",
+		zlog.String("contract", contractName),
 		zlog.String("provider", provider.GetProvider()))
-	
+
 	return nil
 }
 
-// Unregister removes a contract from the registry
-func (h *zHodor) Unregister(alias string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	
-	contract, exists := h.contracts[alias]
-	if !exists {
-		return fmt.Errorf("contract alias '%s' not found", alias)
-	}
-	
-	// Close provider resources
-	if err := contract.provider.Close(); err != nil {
-		zlog.Warn("Error closing provider", 
-			zlog.String("alias", alias),
-			zlog.Err(err))
-	}
-	
-	// Remove from registry
-	delete(h.contracts, alias)
-	
-	zlog.Info("Unregistered contract", 
-		zlog.String("alias", alias))
-	
-	return nil
+// Metadata operations using cereal
+
+// CombinedPayload wraps data with metadata for storage
+type CombinedPayload struct {
+	Data     []byte `json:"data"`
+	Metadata []byte `json:"metadata"`
 }
 
-// List returns information about all registered contracts
-func (h *zHodor) List() []ContractInfo {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	
-	infos := make([]ContractInfo, 0, len(h.contracts))
-	for _, contract := range h.contracts {
-		infos = append(infos, ContractInfo{
-			Alias:     contract.alias,
-			Provider:  contract.provider.GetProvider(),
-			Status:    string(contract.status.State),
-			CreatedAt: contract.createdAt,
-		})
+// setWithMetadata stores data with structured metadata using cereal
+func (h *zHodor) setWithMetadata(key string, data []byte, metadata interface{}) error {
+	// Serialize metadata using cereal
+	metadataBytes, err := h.serializer.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to serialize metadata with cereal: %w", err)
 	}
 	
-	return infos
-}
-
-// Status returns the status of a specific contract
-func (h *zHodor) Status(alias string) (ContractStatus, error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	
-	contract, exists := h.contracts[alias]
-	if !exists {
-		return ContractStatus{}, fmt.Errorf("contract alias '%s' not found", alias)
+	// Create combined payload
+	payload := CombinedPayload{
+		Data:     data,
+		Metadata: metadataBytes,
 	}
 	
-	return contract.status, nil
+	// Serialize the combined payload
+	payloadBytes, err := h.serializer.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to serialize payload with cereal: %w", err)
+	}
+	
+	// Store in provider
+	return h.provider.Set(key, payloadBytes, 0)
 }
 
-// Close shuts down all contracts and cleans up
-func (h *zHodor) Close() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+// getWithMetadata retrieves data and deserializes metadata using cereal
+func (h *zHodor) getWithMetadata(key string, metadata interface{}) ([]byte, error) {
+	// Get from provider
+	payloadBytes, err := h.provider.Get(key)
+	if err != nil {
+		return nil, err
+	}
 	
-	var errors []error
+	// Deserialize combined payload
+	var payload CombinedPayload
+	err = h.serializer.Unmarshal(payloadBytes, &payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize payload with cereal: %w", err)
+	}
 	
-	// Close all providers
-	for alias, contract := range h.contracts {
-		if err := contract.provider.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close provider %s: %w", alias, err))
+	// Deserialize metadata if provided
+	if metadata != nil {
+		err = h.serializer.Unmarshal(payload.Metadata, metadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize metadata with cereal: %w", err)
 		}
 	}
 	
-	// Clear registry
-	h.contracts = make(map[string]*registeredContract)
-	
-	if len(errors) > 0 {
-		return fmt.Errorf("errors during shutdown: %v", errors)
+	return payload.Data, nil
+}
+
+// setJSON stores a JSON object using cereal serialization
+func (h *zHodor) setJSON(key string, object interface{}) error {
+	// Serialize object using cereal
+	data, err := h.serializer.Marshal(object)
+	if err != nil {
+		return fmt.Errorf("failed to serialize object with cereal: %w", err)
 	}
 	
-	zlog.Info("Hodor service closed")
-	return nil
+	// Store in provider
+	return h.provider.Set(key, data, 0)
+}
+
+// getJSON retrieves and deserializes a JSON object using cereal
+func (h *zHodor) getJSON(key string, target interface{}) error {
+	// Get from provider
+	data, err := h.provider.Get(key)
+	if err != nil {
+		return err
+	}
+	
+	// Deserialize using cereal
+	return h.serializer.Unmarshal(data, target)
+}
+
+// setJSONScoped stores a JSON object with field-level scoping
+func (h *zHodor) setJSONScoped(key string, object interface{}, userPermissions []string) error {
+	// Serialize object with scoping using cereal
+	data, err := h.serializer.MarshalScoped(object, userPermissions)
+	if err != nil {
+		return fmt.Errorf("failed to serialize scoped object with cereal: %w", err)
+	}
+	
+	// Store in provider
+	return h.provider.Set(key, data, 0)
+}
+
+// getJSONScoped retrieves and deserializes a JSON object with scoping
+func (h *zHodor) getJSONScoped(key string, target interface{}, userPermissions []string) error {
+	// Get from provider
+	data, err := h.provider.Get(key)
+	if err != nil {
+		return err
+	}
+	
+	// Deserialize with scoping using cereal
+	return h.serializer.UnmarshalScoped(data, target, userPermissions, "read")
+}
+
+
+
+
+
+// Provider returns the current hodor provider
+func (h *zHodor) Provider() HodorProvider {
+	if h == nil {
+		return nil
+	}
+	return h.provider
+}
+
+// Config returns the current hodor configuration
+func (h *zHodor) Config() HodorConfig {
+	if h == nil {
+		return HodorConfig{}
+	}
+	return h.config
+}
+
+// Close shuts down the hodor service
+func (h *zHodor) Close() error {
+	if h == nil {
+		return nil
+	}
+	
+	zlog.Info("Closing hodor service")
+	err := h.provider.Close()
+	hodor = nil // Clear singleton
+	return err
 }

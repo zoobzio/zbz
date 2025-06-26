@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"strings"
+	
+	"zbz/cereal"
 )
 
 // ZlogProvider defines the interface that providers implement
@@ -29,19 +31,98 @@ type HodorContract interface {
 	Name() string
 }
 
-
-// zZlog is the internal service layer that handles preprocessing
-type zZlog struct {
-	provider ZlogProvider
-	contract string // Track which contract created this service
+// ZlogConfig defines provider-agnostic zlog configuration
+type ZlogConfig struct {
+	// Service configuration
+	Name        string `yaml:"name" json:"name"`
+	Level       string `yaml:"level" json:"level"`             // "debug", "info", "warn", "error", "fatal"
+	Format      string `yaml:"format" json:"format"`           // "json", "console", "text"
+	Development bool   `yaml:"development" json:"development"` // Enable development mode
+	
+	// Output configuration
+	Outputs     []OutputConfig  `yaml:"outputs,omitempty" json:"outputs,omitempty"`
+	OutputFile  string          `yaml:"output_file,omitempty" json:"output_file,omitempty"`
+	
+	// Performance settings
+	BufferSize  int    `yaml:"buffer_size,omitempty" json:"buffer_size,omitempty"`
+	FlushLevel  string `yaml:"flush_level,omitempty" json:"flush_level,omitempty"`
+	
+	// Sampling configuration (for high-volume scenarios)
+	Sampling    *SamplingConfig `yaml:"sampling,omitempty" json:"sampling,omitempty"`
+	
+	// Provider-specific sections (each provider uses what it needs)
+	Extensions  map[string]interface{} `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 }
 
-// NewZlogService creates a new service with provider
-func NewZlogService(provider ZlogProvider) *zZlog {
-	return &zZlog{
-		provider: provider,
-		contract: "", // Will be set by contract when self-registering
+// OutputConfig defines configuration for a single log output destination
+type OutputConfig struct {
+	Type    string `yaml:"type" json:"type"`                     // "console", "file", "syslog"
+	Level   string `yaml:"level,omitempty" json:"level,omitempty"` // Override global level
+	Format  string `yaml:"format,omitempty" json:"format,omitempty"` // Override global format
+	Target  string `yaml:"target,omitempty" json:"target,omitempty"` // File path, syslog tag, etc.
+	Options map[string]interface{} `yaml:"options,omitempty" json:"options,omitempty"` // Output-specific options
+}
+
+// SamplingConfig configures log sampling for high-volume scenarios
+type SamplingConfig struct {
+	Initial    int `yaml:"initial,omitempty" json:"initial,omitempty"`       // Sample first N messages per second
+	Thereafter int `yaml:"thereafter,omitempty" json:"thereafter,omitempty"` // Then 1 in N thereafter per second
+}
+
+// DefaultConfig returns sensible defaults for zlog configuration
+func DefaultConfig() ZlogConfig {
+	return ZlogConfig{
+		Name:        "app",
+		Level:       "info",
+		Format:      "json",
+		Development: false,
+		BufferSize:  1024,
+		FlushLevel:  "error",
 	}
+}
+
+// zZlog is the singleton service layer that orchestrates logging operations
+// Like cache/hodor singletons, this manages provider abstraction + cereal serialization
+type zZlog struct {
+	provider     ZlogProvider          // Backend provider wrapper
+	serializer   cereal.CerealProvider // Cereal handles complex field serialization
+	config       ZlogConfig            // Service configuration
+	contractName string                // Name of the contract that created this singleton
+}
+
+// configureFromContract initializes the singleton from a contract's registration
+func configureFromContract(contractName string, provider ZlogProvider, config ZlogConfig) error {
+	// Check if we need to replace existing singleton
+	if zlog != nil && zlog.contractName != contractName {
+		// Close old provider
+		if err := zlog.provider.Close(); err != nil {
+			// Log warning but continue (could use fmt.Printf for bootstrap logging)
+		}
+	} else if zlog != nil && zlog.contractName == contractName {
+		// Same contract, no need to replace
+		return nil
+	}
+
+	// Set up cereal serialization for complex field processing
+	cerealConfig := cereal.DefaultConfig()
+	cerealConfig.Name = "zlog-serializer"
+	cerealConfig.DefaultFormat = "json" // Use JSON for structured log data
+	cerealConfig.EnableCaching = true   // Cache field serialization for performance
+	cerealConfig.EnableScoping = true   // Enable scoped logging for sensitive data
+	
+	// Create JSON provider for log field serialization
+	cerealContract := cereal.NewJSONProvider(cerealConfig)
+	cerealProvider := cerealContract.Provider()
+
+	// Create service singleton
+	zlog = &zZlog{
+		provider:     provider,
+		serializer:   cerealProvider, // Cereal handles complex field serialization
+		config:       config,
+		contractName: contractName,
+	}
+
+	return nil
 }
 
 // Info processes fields through pipeline and calls provider
@@ -100,6 +181,10 @@ func (z *zZlog) processFields(fields []Field) []Field {
 			// Extract correlation IDs from context
 			correlationFields := z.processCorrelation(field)
 			processed = append(processed, correlationFields...)
+			
+		case AnyType:
+			// Use cereal to serialize complex data structures
+			processed = append(processed, z.processComplexField(field))
 			
 		default:
 			// Regular fields pass through unchanged
@@ -201,4 +286,30 @@ func (z *zZlog) extractFromGenericContext(ctx any) []Field {
 	}
 	
 	return fields
+}
+
+// processComplexField serializes complex data structures using cereal
+func (z *zZlog) processComplexField(field Field) Field {
+	// Use cereal to serialize complex objects to JSON strings
+	serialized, err := z.serializer.Marshal(field.Value)
+	if err != nil {
+		// If serialization fails, fall back to string representation
+		return String(field.Key+"_error", fmt.Sprintf("serialization failed: %v (value: %v)", err, field.Value))
+	}
+	
+	// Return as string field containing JSON
+	return String(field.Key, string(serialized))
+}
+
+// processComplexFieldScoped serializes complex data with field-level scoping
+func (z *zZlog) processComplexFieldScoped(field Field, userPermissions []string) Field {
+	// Use cereal scoped serialization to filter sensitive fields in log data
+	serialized, err := z.serializer.MarshalScoped(field.Value, userPermissions)
+	if err != nil {
+		// If scoped serialization fails, fall back to regular serialization
+		return z.processComplexField(field)
+	}
+	
+	// Return as string field containing scoped JSON
+	return String(field.Key+"_scoped", string(serialized))
 }
