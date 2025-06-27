@@ -27,13 +27,12 @@ const (
 	ByteStringType
 	AnyType
 	StringsType
-	
+
 	// Special field types (processed by pipeline before driver)
-	CallDepthType FieldType = 100 + iota // Adjust call stack depth
-	SecretType                            // Encrypt sensitive data
-	PIIType                               // Redact/hash PII based on compliance
-	MetricType                            // Inject performance metrics
-	CorrelationType                       // Propagate correlation IDs
+	SecretType      // Encrypt sensitive data
+	PIIType         // Redact/hash PII based on compliance
+	MetricType      // Inject performance metrics
+	CorrelationType // Propagate correlation IDs
 )
 
 // Type-safe field constructors (zap-like API)
@@ -82,11 +81,6 @@ func Strings(key string, value []string) Field {
 }
 
 // Special field constructors for pipeline processing
-
-// CallDepth adds extra skip levels to the call stack for accurate file/line reporting
-func CallDepth(depth int) Field {
-	return Field{Key: "_calldepth", Type: CallDepthType, Value: depth}
-}
 
 // Secret marks sensitive data for encryption in logs
 func Secret(key, value string) Field {

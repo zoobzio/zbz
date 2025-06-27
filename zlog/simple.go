@@ -2,12 +2,11 @@ package zlog
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 )
 
-// simpleProvider implements ZlogProvider interface with minimal, readable console output
+// simpleProvider implements Provider interface with minimal, readable console output
 type simpleProvider struct {
 	minLevel logLevel
 }
@@ -23,7 +22,7 @@ const (
 )
 
 // newSimpleProvider creates a new simple console provider
-func newSimpleProvider() ZlogProvider {
+func newSimpleProvider() Provider {
 	return &simpleProvider{
 		minLevel: levelInfo, // Default to info level
 	}
@@ -84,13 +83,12 @@ func (s *simpleProvider) log(level logLevel, levelStr, msg string, fields []Fiel
 		}
 	}
 	
-	// Print to stdout (or stderr for errors)
-	output := strings.Join(parts, " ")
-	if level >= levelError {
-		fmt.Fprintln(os.Stderr, output)
-	} else {
-		fmt.Fprintln(os.Stdout, output)
-	}
+	// Print to the service's writer (which handles piping)
+	output := strings.Join(parts, " ") + "\n"
+	
+	// Get the service writer that handles piping
+	writer := zlog.Writer()
+	writer.Write([]byte(output))
 }
 
 // formatField converts a zlog field to a simple key=value string

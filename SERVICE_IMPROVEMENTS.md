@@ -2,13 +2,13 @@
 
 ## Executive Summary
 
-Cache forced us to discover the **optimal provider pattern** by combining the best of zlog/hodor/flux. Applying this same reflection to our other services reveals several architectural inconsistencies and improvement opportunities.
+Cache forced us to discover the **optimal provider pattern** by combining the best of zlog/depot/flux. Applying this same reflection to our other services reveals several architectural inconsistencies and improvement opportunities.
 
 ## Key Discoveries from Cache Analysis
 
 ### **The Optimal Pattern: Singleton + Tables + Type Safety**
 1. **Singleton Service** (zlog pattern) - One service instance per application
-2. **Table/Resource Abstraction** (hodor concept) - Logical organization within service
+2. **Table/Resource Abstraction** (depot concept) - Logical organization within service
 3. **Type Safety** (flux pattern) - Compile-time guarantees with generics
 4. **Service Layer** - Orchestration of providers, serialization, preprocessing
 
@@ -43,17 +43,17 @@ debugLogs.Debug("Query executed", zlog.Duration("latency", 42*time.Millisecond))
 - **Log Routing**: User events → audit logs, system alerts → monitoring, debug → local files
 - **Level Control**: Different log levels per logger type
 - **Format Control**: JSON for APIs, human-readable for debug
-- **Output Control**: Different Hodor contracts per logger type
+- **Output Control**: Different Depot contracts per logger type
 
 ---
 
-### 2. **hodor: Missing Singleton Option**
+### 2. **depot: Missing Singleton Option**
 
 #### **Current State:**
 ```go
 // Must create contracts manually - no global API
-contract1 := hodor.NewContract("files", s3Provider)
-contract2 := hodor.NewContract("cache", gcsProvider)
+contract1 := depot.NewContract("files", s3Provider)
+contract2 := depot.NewContract("cache", gcsProvider)
 contract1.Set("key", data, ttl)
 contract2.Set("key", data, ttl)
 ```
@@ -63,14 +63,14 @@ contract2.Set("key", data, ttl)
 #### **Improvement: Add Singleton Mode**
 ```go
 // Option 1: Simple singleton for single-storage apps
-hodor.Configure(s3Provider, hodor.Config{})
-hodor.Set("uploads/file.jpg", data, 0)  // Global API like zlog
-hodor.Get("uploads/file.jpg")
+depot.Configure(s3Provider, depot.Config{})
+depot.Set("uploads/file.jpg", data, 0)  // Global API like zlog
+depot.Get("uploads/file.jpg")
 
 // Option 2: Bucket abstraction within singleton storage
-uploads := hodor.Bucket("uploads")    // Like cache tables
-cache := hodor.Bucket("cache")        // Same S3 bucket, logical separation
-configs := hodor.Bucket("configs")
+uploads := depot.Bucket("uploads")    // Like cache tables
+cache := depot.Bucket("cache")        // Same S3 bucket, logical separation
+configs := depot.Bucket("configs")
 
 uploads.Set("profile.jpg", imageData, 0)
 cache.Set("user:123", userData, 1*time.Hour)
@@ -88,16 +88,16 @@ configs.Set("app.yaml", configData, 0)
 
 #### **Current State:**
 ```go
-// Tightly coupled to hodor contracts
-contract := hodor.NewContract("config", s3Provider)
+// Tightly coupled to depot contracts
+contract := depot.NewContract("config", s3Provider)
 flux.Sync[Config](contract, "app.yaml", callback)
 ```
 
-#### **Problem:** Can't use flux with non-hodor sources (HTTP APIs, databases, etc.)
+#### **Problem:** Can't use flux with non-depot sources (HTTP APIs, databases, etc.)
 
 #### **Improvement: Add Source Abstraction**
 ```go
-// Generic source interface (not just hodor)
+// Generic source interface (not just depot)
 type FluxSource interface {
     Get(key string) ([]byte, error)
     Subscribe(key string, callback func([]byte)) (SubscriptionID, error)
@@ -112,9 +112,9 @@ flux.Sync[Config](httpSource, "app.json", callback)
 dbSource := flux.NewDatabaseSource(dbConnection)
 flux.Sync[[]User](dbSource, "SELECT * FROM users WHERE active=true", callback)
 
-// Hodor source (current pattern)
-hodorSource := flux.NewHodorSource(hodorContract)
-flux.Sync[Config](hodorSource, "app.yaml", callback)
+// Depot source (current pattern)
+depotSource := flux.NewDepotSource(depotContract)
+flux.Sync[Config](depotSource, "app.yaml", callback)
 ```
 
 #### **Benefits:**
@@ -128,7 +128,7 @@ flux.Sync[Config](hodorSource, "app.yaml", callback)
 
 #### **Current Problems:**
 
-1. **zlog + hodor Integration**: Manual setup for log shipping to cloud storage
+1. **zlog + depot Integration**: Manual setup for log shipping to cloud storage
 2. **flux + database**: No reactive database query capability  
 3. **cache + zlog**: No automatic cache operation logging
 4. **Service Discovery**: No unified way to find/configure services
@@ -140,9 +140,9 @@ flux.Sync[Config](hodorSource, "app.yaml", callback)
 // Like Docker Compose - declare all service dependencies
 services := zbz.Services{
     Cache:   cache.Config{Provider: "redis", URL: "redis://localhost:6379"},
-    Storage: hodor.Config{Provider: "s3", Bucket: "myapp-storage"},
-    Logs:    zlog.Config{Provider: "zap", Output: "console+hodor"},
-    Flux:    flux.Config{Sources: []string{"hodor", "http"}},
+    Storage: depot.Config{Provider: "s3", Bucket: "myapp-storage"},
+    Logs:    zlog.Config{Provider: "zap", Output: "console+depot"},
+    Flux:    flux.Config{Sources: []string{"depot", "http"}},
 }
 
 // One-call initialization
@@ -150,19 +150,19 @@ zbz.Configure(services)
 
 // Services auto-discover each other
 cache.Table[User]("users")          // Automatically logs cache operations
-hodor.Bucket("logs")                 // Automatically receives logs from zlog
-flux.Sync[Config](hodor, "app.yaml") // Automatically uses configured hodor
+depot.Bucket("logs")                 // Automatically receives logs from zlog
+flux.Sync[Config](depot, "app.yaml") // Automatically uses configured depot
 ```
 
 ### **B. Service-to-Service Contracts**
 ```go
 // Services can provide contracts to other services
-zlogContract := zlog.GetContract()    // Provides logging to other services
-hodorContract := hodor.GetContract()  // Provides storage to other services
+Contract := zlog.GetContract()    // Provides logging to other services
+depotContract := depot.GetContract()  // Provides storage to other services
 
 // Automatic integration
-cache.WithLogging(zlogContract)       // Cache operations auto-logged
-flux.WithStorage(hodorContract)       // Flux uses hodor for file watching
+cache.WithLogging(Contract)       // Cache operations auto-logged
+flux.WithStorage(depotContract)       // Flux uses depot for file watching
 ```
 
 ---
@@ -196,12 +196,12 @@ type LoggerContract struct {
 }
 ```
 
-### **2. hodor Singleton Mode**
+### **2. depot Singleton Mode**
 ```go
-// Add to hodor/api.go
-var defaultContract *HodorContract
+// Add to depot/api.go
+var defaultContract *DepotContract
 
-func Configure(provider HodorProvider, config Config) {
+func Configure(provider DepotProvider, config Config) {
     defaultContract = NewContract("default", provider)
 }
 
@@ -230,11 +230,11 @@ type FluxSource interface {
 
 // Update flux/api.go
 func Sync[T any](source FluxSource, key string, callback func(old, new T)) {
-    // Works with any source, not just hodor
+    // Works with any source, not just depot
 }
 
 // Source implementations
-func NewHodorSource(contract *hodor.HodorContract) FluxSource
+func NewDepotSource(contract *depot.DepotContract) FluxSource
 func NewHTTPSource(baseURL string) FluxSource  
 func NewDatabaseSource(db *sql.DB) FluxSource
 ```
@@ -244,7 +244,7 @@ func NewDatabaseSource(db *sql.DB) FluxSource
 // Add zbz/services.go
 type ServiceConfig struct {
     Cache   *cache.Config   `yaml:"cache"`
-    Storage *hodor.Config   `yaml:"storage"`
+    Storage *depot.Config   `yaml:"storage"`
     Logs    *zlog.Config    `yaml:"logs"`
     Flux    *flux.Config    `yaml:"flux"`
 }
@@ -255,7 +255,7 @@ func Configure(config ServiceConfig) error {
         cache.Configure(createCacheProvider(config.Cache))
     }
     if config.Storage != nil {
-        hodor.Configure(createHodorProvider(config.Storage))
+        depot.Configure(createDepotProvider(config.Storage))
     }
     // ... auto-wire services together
 }
@@ -265,7 +265,7 @@ func Configure(config ServiceConfig) error {
 
 ### **High Priority (Immediate Value)**
 1. **zlog Logger Tables** - Logical log separation is very useful
-2. **hodor Singleton Mode** - Simplifies 80% use case significantly
+2. **depot Singleton Mode** - Simplifies 80% use case significantly
 3. **Service Auto-Discovery** - Eliminates manual service wiring
 
 ### **Medium Priority (Future Enhancement)**  
@@ -282,7 +282,7 @@ func Configure(config ServiceConfig) error {
 
 The cache analysis revealed that **zbz services have inconsistent patterns**:
 - **zlog**: Singleton ✅, Tables ❌, Type Safety ⚠️  
-- **hodor**: Multi-Instance ✅, Tables ⚠️, Singleton ❌
+- **depot**: Multi-Instance ✅, Tables ⚠️, Singleton ❌
 - **flux**: Type Safety ✅, Provider Abstraction ❌, Service Layer ⚠️
 - **cache**: All Patterns ✅ (after V3 design)
 

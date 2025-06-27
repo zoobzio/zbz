@@ -223,21 +223,21 @@ users := cache.Table[User]("users")    // Type-safe table abstraction
 redisClient := contract.Native()       // redis.Cmdable - no casting!
 ```
 
-### **Hodor Service (Storage) - New Implementation**
+### **Depot Service (Storage) - New Implementation**
 
 ```go
 // 1. Provider packages  
-hodors3.NewS3Storage(config)          // → *HodorContract[*s3.S3]
-hodorgcs.NewGCSStorage(config)        // → *HodorContract[*storage.Client]
-hodorfs.NewFilesystemStorage(config) // → *HodorContract[*os.File]
+depots3.NewS3Storage(config)          // → *DepotContract[*s3.S3]
+depotgcs.NewGCSStorage(config)        // → *DepotContract[*storage.Client]
+depotfs.NewFilesystemStorage(config) // → *DepotContract[*os.File]
 
 // 2. Usage
-contract := hodors3.NewS3Storage(config)
+contract := depots3.NewS3Storage(config)
 contract.Register()  // Sets global singleton
 
 // 3. Package functions
-hodor.Set("key", data, ttl)           // Uses singleton
-hodor.Subscribe("key", callback)      // Reactive operations
+depot.Set("key", data, ttl)           // Uses singleton
+depot.Subscribe("key", callback)      // Reactive operations
 
 // 4. Native access
 s3Client := contract.Native()         // *s3.S3 - no casting!
@@ -247,8 +247,8 @@ s3Client := contract.Native()         // *s3.S3 - no casting!
 
 ```go
 // 1. Provider packages
-zlogzap.NewZapLogger(config)          // → *ZlogContract[*zap.Logger]
-zlogzerolog.NewZerologLogger(config) // → *ZlogContract[zerolog.Logger]
+zlogzap.NewZapLogger(config)          // → *Contract[*zap.Logger]
+zlogzerolog.NewZerologLogger(config) // → *Contract[zerolog.Logger]
 
 // 2. Usage  
 contract := zlogzap.NewZapLogger(config)
@@ -271,7 +271,7 @@ All services support hot-reloading through flux integration:
 // Watch config file for changes
 fluxContract, err := cache.ConfigureFromFlux(
     cacheredis.NewRedisCache,  // Provider function
-    hodorContract,             // Config storage
+    depotContract,             // Config storage
     "cache.yaml",             // Config file to watch
 )
 
@@ -286,7 +286,7 @@ Services can be composed for complex scenarios:
 
 ```go
 // 1. Set up storage
-storageContract := hodors3.NewS3Storage(hodorConfig)
+storageContract := depots3.NewS3Storage(depotConfig)
 storageContract.Register()
 
 // 2. Set up cache with storage backend
@@ -298,7 +298,7 @@ logContract := zlogzap.NewZapLogger(zlogConfig)
 logContract.Register()
 
 // 4. All package functions now work together
-hodor.Set("config.yaml", configData, 0)  // Store in S3
+depot.Set("config.yaml", configData, 0)  // Store in S3
 cache.Set(ctx, "user:1", userData)       // Cache in Redis
 zlog.Info("Services configured")          // Log with Zap
 ```
@@ -375,10 +375,10 @@ func SetupCache(config CacheConfig) error {
 
 ### **Phase 1: Core Services (Completed)**
 - ✅ Cache service with universal contract pattern
-- ✅ Hodor service updated to match cache pattern
+- ✅ Depot service updated to match cache pattern
 
 ### **Phase 2: Provider Updates (In Progress)**
-- 🔄 Update all hodor providers to universal config
+- 🔄 Update all depot providers to universal config
 - ⏳ Update all zlog providers to universal config
 - ⏳ Add flux integration to all services
 

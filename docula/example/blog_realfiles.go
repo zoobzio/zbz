@@ -8,7 +8,7 @@ import (
 	"time"
 
 	docula "zbz/docula/v2"
-	"zbz/hodor"
+	"zbz/depot"
 	"zbz/zlog"
 )
 
@@ -17,7 +17,7 @@ func main() {
 
 	// Create file system storage pointing to our blog content directory
 	contentDir := "./blog-content"
-	fileStorage, err := hodor.NewFileSystem(contentDir)
+	fileStorage, err := depot.NewFileSystem(contentDir)
 	if err != nil {
 		log.Fatal("Failed to create file system storage:", err)
 	}
@@ -156,7 +156,7 @@ draft: false
 
 1. **File written** to %s
 2. **fsnotify detects** the file change
-3. **Hodor filesystem provider** triggers change event
+3. **Depot filesystem provider** triggers change event
 4. **Flux collection watching** processes the update
 5. **Docula regenerates** the blog automatically
 

@@ -1,14 +1,13 @@
 package zbz
 
 import (
-	"encoding/json"
+	"zbz/cereal"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"zbz/zlog"
-	"gopkg.in/yaml.v3"
 )
 
 // Docs is an interface for API documentation functionality
@@ -202,7 +201,7 @@ func (d *zDocs) AddPath(contract *HandlerContract, errorManager ErrorManager) {
 
 // AddSchema adds a new schema to the OpenAPI specification
 func (d *zDocs) AddSchema(meta *Meta) {
-	example, err := json.Marshal(meta.ExampleValue)
+	example, err := cereal.JSON.Marshal(meta.ExampleValue)
 	if err != nil {
 		zlog.Zlog.Fatal("Failed to marshal example for model", zlog.Any("meta", meta), zlog.Err(err))
 	}
@@ -562,7 +561,7 @@ func (d *zDocs) getOpenAPIConstraints(parsed ParsedValidationRules) map[string]a
 
 // GenerateYAML generates the OpenAPI specification in YAML format
 func (d *zDocs) GenerateYAML(spec *OpenAPISpec) {
-	data, err := yaml.Marshal(spec)
+	data, err := cereal.YAML.Marshal(spec)
 	if err != nil {
 		zlog.Zlog.Fatal("failed to marshal OpenAPI spec to YAML", zlog.Err(err))
 	}
@@ -595,7 +594,7 @@ func (d *zDocs) SpecHandler(ctx RequestContext) {
 		// Return scoped schema for regular users
 		scopedSpec := d.filterSpecByPermissions(d.spec, userPerms)
 		
-		data, err := yaml.Marshal(scopedSpec)
+		data, err := cereal.YAML.Marshal(scopedSpec)
 		if err != nil {
 			zlog.Zlog.Error("Failed to marshal scoped OpenAPI spec to YAML", zlog.Err(err))
 			ctx.Status(http.StatusInternalServerError)

@@ -10,15 +10,15 @@ import (
 	"zbz/zlog"
 )
 
-// ZlogContract represents a configuration for logging assignment
-type ZlogContract struct {
+// Contract represents a configuration for logging assignment
+type Contract struct {
 	BaseContract
 	Driver      string         // Logging provider ("simple", "noop", "zap", etc.)
 	Config      map[string]any // Provider-specific configuration
 }
 
 // Zlog resolves this contract to a ZlogService instance and sets global singleton
-func (c ZlogContract) Zlog() zlog.ZlogService {
+func (c Contract) Zlog() zlog.ZlogService {
 	// TODO: Implement with new factory pattern
 	// For now, return the global singleton which should be set by provider factories
 	return zlog.Zlog

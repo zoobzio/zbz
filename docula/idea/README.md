@@ -4,7 +4,7 @@
 
 Transform docula from static OpenAPI generation to a **living documentation system** powered by:
 
-- **Hodor cloud storage** for markdown content
+- **Depot cloud storage** for markdown content
 - **Flux reactive updates** for real-time doc changes
 - **Self-contained UI** for docs site hosting
 - **Markdown-driven content** with convention-based naming
@@ -13,7 +13,7 @@ Transform docula from static OpenAPI generation to a **living documentation syst
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Hodor Cloud   │◄──►│  Flux Watcher   │◄──►│ Docula Service  │
+│   Depot Cloud   │◄──►│  Flux Watcher   │◄──►│ Docula Service  │
 │   Storage       │    │  (Reactive)     │    │  (Generator)    │
 │  - api.md       │    │                 │    │                 │
 │  - create_user  │    │  Auto-updates   │    │  OpenAPI +      │
@@ -23,10 +23,10 @@ Transform docula from static OpenAPI generation to a **living documentation syst
 
 ## Core Components
 
-### 1. **Hodor Integration**
+### 1. **Depot Integration**
 
 - Store markdown docs in cloud bucket (S3, GCS, MinIO, etc.)
-- Support any hodor provider for maximum flexibility
+- Support any depot provider for maximum flexibility
 - Bucket structure follows naming conventions
 
 ### 2. **Flux Reactive Updates**
@@ -68,19 +68,19 @@ Transform docula from static OpenAPI generation to a **living documentation syst
 - Clean contract interface
 - Thread-safe singleton pattern
 
-### Phase 2: Hodor + Flux Integration 🎯 (Next Sprint)
+### Phase 2: Depot + Flux Integration 🎯 (Next Sprint)
 
 #### 2.1 Add Dependencies
 
 ```go
 // go.mod additions needed
 require (
-    zbz/hodor v0.0.0-00010101000000-000000000000
+    zbz/depot v0.0.0-00010101000000-000000000000
     zbz/flux v0.0.0-00010101000000-000000000000
 )
 
 // Add to replacements
-replace zbz/hodor => ../hodor
+replace zbz/depot => ../depot
 replace zbz/flux => ../flux
 ```
 
@@ -92,8 +92,8 @@ type DoculaContract struct {
     Description string `yaml:"description,omitempty"`
     Info        *OpenAPIInfo `yaml:"info,omitempty"`
 
-    // NEW: Hodor storage for markdown content
-    Storage     *hodor.HodorContract `yaml:"storage,omitempty"`
+    // NEW: Depot storage for markdown content
+    Storage     *depot.DepotContract `yaml:"storage,omitempty"`
 
     // NEW: Flux configuration for reactive updates
     ReactiveUpdates bool `yaml:"reactive_updates,omitempty"`
@@ -114,17 +114,17 @@ type DocsUIConfig struct {
 
 ```go
 type MarkdownLoader struct {
-    hodor     hodor.HodorContract
+    depot     depot.DepotContract
     processor *MarkdownProcessor
 }
 
 func (m *MarkdownLoader) LoadAPIDescription() (string, error) {
-    content, err := m.hodor.Get("api.md")
+    content, err := m.depot.Get("api.md")
     // Process markdown → HTML/text for OpenAPI description
 }
 
 func (m *MarkdownLoader) LoadOperationDoc(operationId string) (*OperationDoc, error) {
-    content, err := m.hodor.Get(operationId + ".md")
+    content, err := m.depot.Get(operationId + ".md")
     // Parse markdown for operation-specific docs
 }
 ```
@@ -204,7 +204,7 @@ func (c *ConventionProcessor) EnrichSchema(name string, schema *OpenAPISchema) {
 #### 4.1 Live Editing Interface
 
 - Web-based markdown editor at `/docs/edit`
-- Direct editing of markdown in hodor storage
+- Direct editing of markdown in depot storage
 - Real-time preview of changes
 
 #### 4.2 Multi-Language Support
@@ -284,7 +284,7 @@ docs_ui:
 contract := docula.DoculaContract{
     Name:            "api-docs",
     ReactiveUpdates: true,
-    Storage: &hodor.HodorContract{
+    Storage: &depot.DepotContract{
         Provider: "s3",
         Config: map[string]any{
             "bucket": "myapi-docs",
@@ -305,7 +305,7 @@ docs.RegisterModel("User", User{})
 docs.RegisterEndpoint("POST", "/users", "users", "Create User", "Create a new user", ...)
 
 // NEW: Markdown content enhances the generated docs automatically
-// Content from hodor storage bucket enriches the OpenAPI spec
+// Content from depot storage bucket enriches the OpenAPI spec
 ```
 
 ## Benefits
@@ -320,7 +320,7 @@ docs.RegisterEndpoint("POST", "/users", "users", "Create User", "Create a new us
 ### For Operations
 
 - **Self-Contained**: No external doc hosting needed
-- **Scalable Storage**: Use any cloud provider via hodor
+- **Scalable Storage**: Use any cloud provider via depot
 - **Reactive**: Automatic updates without restarts
 - **Flexible UI**: Choose your preferred docs engine
 
@@ -336,20 +336,20 @@ docs.RegisterEndpoint("POST", "/users", "users", "Create User", "Create a new us
 ### Existing Docula Users
 
 1. **No Breaking Changes**: Current programmatic API unchanged
-2. **Opt-In Features**: Hodor/Flux integration is optional
+2. **Opt-In Features**: Depot/Flux integration is optional
 3. **Enhanced Output**: Markdown content enriches existing docs
 4. **Backward Compatible**: Existing contracts continue working
 
 ### Implementation Strategy
 
-1. **Phase 2**: Core hodor/flux integration (1-2 weeks)
+1. **Phase 2**: Core depot/flux integration (1-2 weeks)
 2. **Phase 3**: Self-contained UI (1 week)
 3. **Phase 4**: Advanced features (ongoing)
 
 ## Next Steps
 
-1. **Update go.mod** with hodor/flux dependencies
-2. **Implement MarkdownLoader** for hodor integration
+1. **Update go.mod** with depot/flux dependencies
+2. **Implement MarkdownLoader** for depot integration
 3. **Add Flux reactive system** for live updates
 4. **Embed Scalar UI** for self-contained docs
 5. **Test with example application**
@@ -379,7 +379,7 @@ type DoculaContent struct {
     Metadata map[string]interface{} // additional metadata
 }
 
-// Flux watches the hodor bucket and syncs content to docula
+// Flux watches the depot bucket and syncs content to docula
 func (d *doculaService) setupFluxSync() error {
     // Simple sync - Flux handles the watching, we handle the processing
     watcher, err := flux.Sync[map[string][]byte](
@@ -611,7 +611,7 @@ func (d *doculaService) setupFluxSync() error {
 1. **Never fail the service** - Documentation errors shouldn't break the API
 2. **Provide placeholders** - "Documentation pending..." is better than empty
 3. **Log but continue** - Record issues for debugging without disrupting service
-4. **Graceful degradation** - Work without Flux/Hodor if needed
+4. **Graceful degradation** - Work without Flux/Depot if needed
 5. **User-friendly defaults** - Help users find the docs even when content is missing
 
 ### Developer Documentation Site (Go + HTMX)
@@ -1205,7 +1205,7 @@ business_metrics:
 type DatabaseSchemaContract struct {
     Name        string
     Description string
-    Storage     *hodor.HodorContract // For schema.yaml and metadata files
+    Storage     *depot.DepotContract // For schema.yaml and metadata files
     AutoGenerate bool                 // Generate from zbz models
 }
 
@@ -1226,7 +1226,7 @@ func (d *doculaService) generateDatabaseSchema() {
     // Merge with user-provided metadata
     d.mergeMetadata(schema)
     
-    // Publish to hodor
+    // Publish to depot
     d.publishSchema(schema)
 }
 

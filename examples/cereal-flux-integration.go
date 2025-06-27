@@ -9,7 +9,7 @@ import (
 // It uses mock implementations to show the integration pattern
 
 // Mock interfaces for demonstration
-type HodorContract interface {
+type DepotContract interface {
 	Get(key string) ([]byte, error)
 	Set(key string, data []byte, ttl int) error
 	Subscribe(key string, callback func([]byte)) error
@@ -33,14 +33,14 @@ type FluxContract interface {
 
 // CerealFlux demonstrates flux integration with cereal
 type CerealFlux struct {
-	hodorContract HodorContract
+	depotContract DepotContract
 	cerealProvider CerealProvider
 }
 
 // NewCerealFlux creates a new flux service with cereal integration
-func NewCerealFlux(hodor HodorContract, cereal CerealProvider) *CerealFlux {
+func NewCerealFlux(depot DepotContract, cereal CerealProvider) *CerealFlux {
 	return &CerealFlux{
-		hodorContract: hodor,
+		depotContract: depot,
 		cerealProvider: cereal,
 	}
 }
@@ -48,7 +48,7 @@ func NewCerealFlux(hodor HodorContract, cereal CerealProvider) *CerealFlux {
 // Watch creates a configuration watcher with cereal serialization
 func (cf *CerealFlux) Watch(configPath string, callback func(interface{})) (FluxContract, error) {
 	// Load initial configuration using cereal
-	data, err := cf.hodorContract.Get(configPath)
+	data, err := cf.depotContract.Get(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
@@ -63,14 +63,14 @@ func (cf *CerealFlux) Watch(configPath string, callback func(interface{})) (Flux
 	// Create watcher
 	watcher := &cerealWatcher{
 		path: configPath,
-		hodor: cf.hodorContract,
+		depot: cf.depotContract,
 		cereal: cf.cerealProvider,
 		callback: callback,
 		active: true,
 	}
 	
 	// Subscribe to changes
-	err = cf.hodorContract.Subscribe(configPath, watcher.handleChange)
+	err = cf.depotContract.Subscribe(configPath, watcher.handleChange)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe: %w", err)
 	}
@@ -84,7 +84,7 @@ func (cf *CerealFlux) Watch(configPath string, callback func(interface{})) (Flux
 // WatchScoped creates a configuration watcher with field-level scoping
 func (cf *CerealFlux) WatchScoped(configPath string, userPermissions []string, callback func(interface{})) (FluxContract, error) {
 	// Load initial configuration using cereal with scoping
-	data, err := cf.hodorContract.Get(configPath)
+	data, err := cf.depotContract.Get(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
@@ -99,7 +99,7 @@ func (cf *CerealFlux) WatchScoped(configPath string, userPermissions []string, c
 	// Create scoped watcher
 	watcher := &cerealScopedWatcher{
 		path: configPath,
-		hodor: cf.hodorContract,
+		depot: cf.depotContract,
 		cereal: cf.cerealProvider,
 		permissions: userPermissions,
 		callback: callback,
@@ -107,7 +107,7 @@ func (cf *CerealFlux) WatchScoped(configPath string, userPermissions []string, c
 	}
 	
 	// Subscribe to changes
-	err = cf.hodorContract.Subscribe(configPath, watcher.handleChange)
+	err = cf.depotContract.Subscribe(configPath, watcher.handleChange)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe: %w", err)
 	}
@@ -126,8 +126,8 @@ func (cf *CerealFlux) UpdateConfig(configPath string, newConfig interface{}) err
 		return fmt.Errorf("cereal marshal failed: %w", err)
 	}
 	
-	// Store in hodor
-	return cf.hodorContract.Set(configPath, data, 0) // No TTL for configs
+	// Store in depot
+	return cf.depotContract.Set(configPath, data, 0) // No TTL for configs
 }
 
 // UpdateConfigScoped updates a configuration file with permission validation
@@ -138,14 +138,14 @@ func (cf *CerealFlux) UpdateConfigScoped(configPath string, newConfig interface{
 		return fmt.Errorf("cereal scoped marshal failed: %w", err)
 	}
 	
-	// Store in hodor
-	return cf.hodorContract.Set(configPath, data, 0)
+	// Store in depot
+	return cf.depotContract.Set(configPath, data, 0)
 }
 
 // cerealWatcher implements FluxContract for regular configuration watching
 type cerealWatcher struct {
 	path     string
-	hodor    HodorContract
+	depot    DepotContract
 	cereal   CerealProvider
 	callback func(interface{})
 	active   bool
@@ -164,7 +164,7 @@ func (cw *cerealWatcher) handleChange(newData []byte) {
 
 func (cw *cerealWatcher) Stop() error {
 	cw.active = false
-	return cw.hodor.Unsubscribe(cw.path, nil)
+	return cw.depot.Unsubscribe(cw.path, nil)
 }
 
 func (cw *cerealWatcher) Key() string {
@@ -178,7 +178,7 @@ func (cw *cerealWatcher) IsActive() bool {
 // cerealScopedWatcher implements FluxContract for scoped configuration watching
 type cerealScopedWatcher struct {
 	path        string
-	hodor       HodorContract
+	depot       DepotContract
 	cereal      CerealProvider
 	permissions []string
 	callback    func(interface{})
@@ -198,7 +198,7 @@ func (csw *cerealScopedWatcher) handleChange(newData []byte) {
 
 func (csw *cerealScopedWatcher) Stop() error {
 	csw.active = false
-	return csw.hodor.Unsubscribe(csw.path, nil)
+	return csw.depot.Unsubscribe(csw.path, nil)
 }
 
 func (csw *cerealScopedWatcher) Key() string {
@@ -226,17 +226,17 @@ type AppConfig struct {
 }
 
 // Mock implementations for demonstration
-type MockHodor struct {
+type MockDepot struct {
 	data map[string][]byte
 }
 
-func NewMockHodor() *MockHodor {
-	return &MockHodor{
+func NewMockDepot() *MockDepot {
+	return &MockDepot{
 		data: make(map[string][]byte),
 	}
 }
 
-func (m *MockHodor) Get(key string) ([]byte, error) {
+func (m *MockDepot) Get(key string) ([]byte, error) {
 	data, exists := m.data[key]
 	if !exists {
 		return nil, fmt.Errorf("key not found: %s", key)
@@ -244,18 +244,18 @@ func (m *MockHodor) Get(key string) ([]byte, error) {
 	return data, nil
 }
 
-func (m *MockHodor) Set(key string, data []byte, ttl int) error {
+func (m *MockDepot) Set(key string, data []byte, ttl int) error {
 	m.data[key] = data
 	return nil
 }
 
-func (m *MockHodor) Subscribe(key string, callback func([]byte)) error {
+func (m *MockDepot) Subscribe(key string, callback func([]byte)) error {
 	// Mock subscription - in real implementation, this would watch for file changes
 	fmt.Printf("Subscribed to changes for: %s\n", key)
 	return nil
 }
 
-func (m *MockHodor) Unsubscribe(key string, subscription interface{}) error {
+func (m *MockDepot) Unsubscribe(key string, subscription interface{}) error {
 	fmt.Printf("Unsubscribed from: %s\n", key)
 	return nil
 }
@@ -288,9 +288,9 @@ func main() {
 	fmt.Println("===============================")
 	
 	// Set up services
-	hodor := NewMockHodor()
+	depot := NewMockDepot()
 	cereal := &MockCereal{}
-	flux := NewCerealFlux(hodor, cereal)
+	flux := NewCerealFlux(depot, cereal)
 	
 	// Set up initial configuration
 	config := AppConfig{
@@ -308,7 +308,7 @@ func main() {
 	
 	// Store initial config
 	configData := `{"name": "MyApp", "debug": true, "database": {"host": "localhost", "port": 5432}, "secret": "super-secret-key"}`
-	hodor.Set("app.json", []byte(configData), 0)
+	depot.Set("app.json", []byte(configData), 0)
 	
 	fmt.Println("\n📋 Basic Configuration Watching:")
 	

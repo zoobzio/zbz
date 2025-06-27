@@ -1,12 +1,12 @@
 # HTMX Template Engine - Implementation Plan
 
 ## Overview
-Design a template engine that combines Go html/template preprocessing with HTMX-ready output, using Hodor contracts for storage and Flux for hot-reloading. This creates a fully customizable, strongly-typed documentation system with live template updates.
+Design a template engine that combines Go html/template preprocessing with HTMX-ready output, using Depot contracts for storage and Flux for hot-reloading. This creates a fully customizable, strongly-typed documentation system with live template updates.
 
 ## Core Architecture
 
 ### Template Storage & Hot-Reloading
-- **Hodor Contracts**: Templates stored in any provider (filesystem, S3, GCS, memory)
+- **Depot Contracts**: Templates stored in any provider (filesystem, S3, GCS, memory)
 - **Flux Integration**: Hot-reload both `.md` content AND `.tmpl` templates
 - **Convention-Based**: Specific file names power different site types
 - **Cloud Template Swapping**: Change templates via cloud buckets in real-time
@@ -124,7 +124,7 @@ Flux monitors both content and templates:
 ### Real-Time Template Swapping
 ```go
 // User uploads new blog template to S3
-contract := &hodor.HodorContract{
+contract := &depot.DepotContract{
     Provider: "s3",
     Config: map[string]interface{}{
         "bucket": "my-blog-templates",
@@ -182,8 +182,8 @@ contract := DoculaContract{
     Sites: []SiteConfig{
         {
             Type: "blog",           // References BlogProvider
-            Templates: blogHodor,   // Hodor contract for templates
-            Content: contentHodor,  // Hodor contract for content
+            Templates: blogDepot,   // Depot contract for templates
+            Content: contentDepot,  // Depot contract for content
         },
     },
 }
@@ -248,7 +248,7 @@ Templates generate HTML with proper HTMX attributes:
 - **Modular**: Pluggable providers for different site types
 
 ### For Users
-- **Customizable**: Replace any template via Hodor contracts
+- **Customizable**: Replace any template via Depot contracts
 - **Cloud Native**: Templates can live in S3, GCS, etc.
 - **Live Updates**: Change templates without deployments
 - **HTMX Ready**: Interactive features work when HTTP server exists
@@ -262,7 +262,7 @@ Templates generate HTML with proper HTMX attributes:
 ## Implementation Phases
 
 ### Phase 1: Template Engine Core
-- Basic template loading from Hodor contracts
+- Basic template loading from Depot contracts
 - Go html/template processing with custom functions
 - Template caching and reloading
 
@@ -292,7 +292,7 @@ Templates generate HTML with proper HTMX attributes:
 ## Next Steps
 
 1. **Refine Architecture**: Iterate on this design until confident
-2. **Prototype Core**: Build minimal template engine with Hodor integration
+2. **Prototype Core**: Build minimal template engine with Depot integration
 3. **Add Flux**: Integrate hot-reloading for templates
 4. **Build Providers**: Implement blog/docs/kb providers
 5. **HTMX Integration**: Add partial rendering and HTMX helpers

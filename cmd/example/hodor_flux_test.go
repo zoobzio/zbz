@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"zbz/flux"
-	"zbz/hodor"
+	"zbz/depot"
 	"zbz/zlog"
 )
 
@@ -17,17 +17,17 @@ type TestConfig struct {
 	Debug   bool   `json:"debug"`
 }
 
-// testHodorFluxIntegration demonstrates the new hodor + flux reactive architecture
-func testHodorFluxIntegration() {
-	zlog.Info("Starting hodor + flux integration test")
+// testDepotFluxIntegration demonstrates the new depot + flux reactive architecture
+func testDepotFluxIntegration() {
+	zlog.Info("Starting depot + flux integration test")
 
-	// Create a memory hodor contract
-	contract := hodor.NewMemory(nil)
+	// Create a memory depot contract
+	contract := depot.NewMemory(nil)
 	
-	// Register the contract with hodor service
+	// Register the contract with depot service
 	err := contract.Register("test-storage")
 	if err != nil {
-		zlog.Error("Failed to register hodor contract", zlog.Err(err))
+		zlog.Error("Failed to register depot contract", zlog.Err(err))
 		return
 	}
 	defer contract.Unregister()
@@ -39,7 +39,7 @@ func testHodorFluxIntegration() {
 		Debug:   false,
 	}
 
-	// Store initial config in hodor
+	// Store initial config in depot
 	configJSON, _ := json.Marshal(initialConfig)
 	err = contract.Set("config.json", configJSON, 0)
 	if err != nil {
@@ -47,7 +47,7 @@ func testHodorFluxIntegration() {
 		return
 	}
 
-	// Set up reactive watcher using flux.Sync with hodor contract
+	// Set up reactive watcher using flux.Sync with depot contract
 	configWatcher, err := flux.Sync[TestConfig](
 		contract,
 		"config.json",
@@ -180,10 +180,10 @@ func testHodorFluxIntegration() {
 		zlog.Bool("is_paused", configWatcher.IsPaused()),
 		zlog.Bool("is_recovering", configWatcher.IsRecovering()))
 
-	zlog.Info("Hodor + flux integration test completed successfully")
+	zlog.Info("Depot + flux integration test completed successfully")
 }
 
 func init() {
 	// Register test function to be called from main
-	fmt.Println("Hodor + Flux integration test available")
+	fmt.Println("Depot + Flux integration test available")
 }

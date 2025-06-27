@@ -16,7 +16,7 @@ draft: false
 
 1. **File written** to blog-content/live-update-3.md
 2. **fsnotify detects** the file change
-3. **Hodor filesystem provider** triggers change event
+3. **Depot filesystem provider** triggers change event
 4. **Flux collection watching** processes the update
 5. **Docula regenerates** the blog automatically
 

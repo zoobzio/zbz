@@ -8,11 +8,11 @@ require (
 	github.com/yuin/goldmark-meta v1.1.0
 	gopkg.in/yaml.v2 v2.4.0
 	zbz/flux v0.0.0-00010101000000-000000000000
-	zbz/hodor v0.0.0-00010101000000-000000000000
+	zbz/depot v0.0.0-00010101000000-000000000000
 	zbz/zlog v0.0.0-00010101000000-000000000000
 )
 
-replace zbz/hodor => ../../hodor
+replace zbz/depot => ../../depot
 
 replace zbz/flux => ../../flux
 

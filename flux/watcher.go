@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"zbz/hodor"
+	"zbz/depot"
 	"zbz/zlog"
 )
 
@@ -43,270 +43,221 @@ type FluxContract interface {
 	IsPaused() bool
 }
 
-// watcher implements FluxContract for hodor-based cloud storage watching
-type watcher[T any] struct {
-	contract               *hodor.HodorContract
-	key                    string
-	parseFunc              func([]byte) (any, error)
-	callback               func(old, new T)
-	lastValue              *T
-	state                  watcherState
-	throttleTimer          *time.Timer
-	throttleDuration       *time.Duration
-	skipSecurityValidation bool
-	maxFileSize            *int64
-	subscriptionID         hodor.SubscriptionID
-	mu                     sync.RWMutex
+// simpleWatcher implements FluxContract for depot-based watching with simple callbacks
+type simpleWatcher[T any] struct {
+	provider  depot.DepotProvider
+	uri       string
+	callbacks []func(old, new T, err error)
+	options   FluxOptions
+	
+	// State management
+	mu         sync.RWMutex
+	lastValue  *T
+	state      watcherState
+	subscription depot.SubscriptionID
+	
+	// Throttling
+	throttleTimer *time.Timer
+	throttleDuration time.Duration
 }
 
-// Ensure watcher implements FluxContract
-var _ FluxContract = (*watcher[any])(nil)
-
-// startWatching begins cloud event watching through hodor
-func (w *watcher[T]) startWatching() error {
-	// Subscribe to hodor contract events for this key
-	subID, err := w.contract.Subscribe(w.key, func(event hodor.ChangeEvent) {
-		w.handleCloudEvent(event)
+// startWatching begins watching the file through depot
+func (w *simpleWatcher[T]) startWatching() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	// Throttle duration is set during watcher creation from options
+	
+	// Subscribe to changes through depot
+	subscription, err := w.provider.Subscribe(w.uri, func(event depot.ChangeEvent) {
+		w.handleDepotEvent(event)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to subscribe to hodor events: %w", err)
+		return fmt.Errorf("failed to subscribe to uri '%s': %w", w.uri, err)
 	}
-
-	w.subscriptionID = subID
-	zlog.Debug("Started hodor watching", 
-		zlog.String("key", w.key),
-		zlog.String("subscription_id", string(subID)))
-
+	
+	w.subscription = subscription
 	return nil
 }
 
-// handleCloudEvent processes events from hodor cloud storage
-func (w *watcher[T]) handleCloudEvent(event hodor.ChangeEvent) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// Check if watcher is active
-	if w.state == stateDismissed {
+// handleDepotEvent processes depot change events
+func (w *simpleWatcher[T]) handleDepotEvent(event depot.ChangeEvent) {
+	// Only process create/update events, ignore deletes for single file watching
+	if event.Operation == "delete" {
+		zlog.Debug("Ignoring delete event for single file watcher", 
+			zlog.String("uri", w.uri))
 		return
 	}
-
-	// Apply throttling if configured
-	if w.shouldThrottle() {
-		w.scheduleThrottledUpdate(event)
+	
+	// Load current content from provider
+	content, err := w.provider.Get(w.uri)
+	if err != nil {
+		zlog.Warn("Failed to load content after depot event", 
+			zlog.String("uri", w.uri),
+			zlog.Err(err))
 		return
 	}
-
-	w.processCloudEvent(event)
+	
+	w.handleContentChange(content)
 }
 
-// processCloudEvent handles the actual event processing
-func (w *watcher[T]) processCloudEvent(event hodor.ChangeEvent) {
-	// Skip processing if paused
-	if w.state == statePaused {
-		zlog.Debug("Skipping event - watcher paused", zlog.String("key", w.key))
+// handleContentChange processes file content changes
+func (w *simpleWatcher[T]) handleContentChange(content []byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	// Skip if dismissed or paused
+	if w.state == stateDismissed || w.state == statePaused {
 		return
 	}
+	
+	// Throttle rapid changes
+	if w.throttleTimer != nil {
+		w.throttleTimer.Stop()
+	}
+	
+	w.throttleTimer = time.AfterFunc(w.throttleDuration, func() {
+		w.processContentChange(content)
+	})
+}
 
-	// Load new content from hodor
-	content, err := w.contract.Get(w.key)
-	if err != nil {
-		w.handleError(fmt.Errorf("failed to load content after change event: %w", err))
-		return
-	}
+// processContentChange parses and executes callbacks
+func (w *simpleWatcher[T]) processContentChange(content []byte) {
+	w.mu.Lock()
+	oldValue := *w.lastValue
+	w.mu.Unlock()
 
 	// Validate content if security validation is enabled
-	if !w.skipSecurityValidation {
-		if err := validateContent(content, w.key, w.maxFileSize); err != nil {
-			w.handleError(fmt.Errorf("content validation failed: %w", err))
+	if !w.options.SkipSecurityValidation {
+		if err := validateContent(content, w.uri, w.options.MaxFileSize); err != nil {
+			// Enter recovery mode on security error
+			w.mu.Lock()
+			w.state = stateRecovering
+			w.mu.Unlock()
+			
+			zlog.Warn("Security validation failed, entering recovery mode", 
+				zlog.String("uri", w.uri),
+				zlog.Err(err))
+			
+			// Notify callbacks of security error with current values
+			executeCallbacks(w.callbacks, oldValue, oldValue, err)
 			return
 		}
 	}
 
-	// Parse new content
-	parsed, err := w.parseFunc(content)
+	// Parse new content using document-aware parsing
+	newValue, err := parseByExtension[T](content, w.uri)
 	if err != nil {
-		w.handleError(fmt.Errorf("failed to parse content: %w", err))
-		return
-	}
-
-	newValue, ok := parsed.(T)
-	if !ok {
-		w.handleError(fmt.Errorf("parsed value type mismatch"))
-		return
-	}
-
-	// Recovery from error state if we were in recovery
-	if w.state == stateRecovering {
-		w.state = stateActive
-		zlog.Info("Recovered from error state", zlog.String("key", w.key))
-	}
-
-	// Call callback with old and new values
-	var oldValue T
-	if w.lastValue != nil {
-		oldValue = *w.lastValue
-	}
-
-	w.callback(oldValue, newValue)
-	w.lastValue = &newValue
-
-	zlog.Debug("Processed cloud event", 
-		zlog.String("key", w.key),
-		zlog.String("operation", event.Operation))
-}
-
-// shouldThrottle checks if throttling should be applied
-func (w *watcher[T]) shouldThrottle() bool {
-	// Use per-watcher throttle if set, otherwise use service default
-	duration := w.getThrottleDuration()
-	if duration <= 0 {
-		return false
-	}
-
-	// If timer is already running, we should throttle
-	if w.throttleTimer != nil {
-		return true
-	}
-
-	return false
-}
-
-// scheduleThrottledUpdate schedules an update after throttle duration
-func (w *watcher[T]) scheduleThrottledUpdate(event hodor.ChangeEvent) {
-	duration := w.getThrottleDuration()
-	
-	// Reset existing timer if any
-	if w.throttleTimer != nil {
-		w.throttleTimer.Stop()
-	}
-
-	// Schedule delayed processing
-	w.throttleTimer = time.AfterFunc(duration, func() {
+		// Enter recovery mode on parse error
 		w.mu.Lock()
-		w.throttleTimer = nil
+		w.state = stateRecovering
 		w.mu.Unlock()
 		
-		w.processCloudEvent(event)
-	})
-
-	zlog.Debug("Throttled event", 
-		zlog.String("key", w.key),
-		zlog.Duration("delay", duration))
-}
-
-// getThrottleDuration returns the throttle duration for this watcher
-func (w *watcher[T]) getThrottleDuration() time.Duration {
-	if w.throttleDuration != nil {
-		return *w.throttleDuration
+		zlog.Warn("Parse error, entering recovery mode", 
+			zlog.String("uri", w.uri),
+			zlog.Err(err))
+		
+		// Notify callbacks of parse error with current values
+		executeCallbacks(w.callbacks, oldValue, oldValue, err)
+		return
 	}
-	// Use service default (100ms)
-	return 100 * time.Millisecond
+	
+	w.mu.Lock()
+	oldValue := *w.lastValue
+	*w.lastValue = newValue
+	
+	// Exit recovery mode if we were in it
+	if w.state == stateRecovering {
+		w.state = stateActive
+		zlog.Info("Recovered from parse error", zlog.String("uri", w.uri))
+	}
+	w.mu.Unlock()
+	
+	// Execute all callbacks independently with no error (successful parse)
+	executeCallbacks(w.callbacks, oldValue, newValue, nil)
 }
 
-// handleError puts watcher into recovery state
-func (w *watcher[T]) handleError(err error) {
-	w.state = stateRecovering
-	zlog.Warn("Watcher error - entering recovery state", 
-		zlog.String("key", w.key),
-		zlog.Err(err))
-}
-
-// FluxContract implementation
-
-// Resolve gets the current value without triggering callback
-func (w *watcher[T]) Resolve() (any, error) {
+// Resolve gets the current value
+func (w *simpleWatcher[T]) Resolve() (any, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-
-	if w.state == stateDismissed {
-		return nil, fmt.Errorf("watcher is dismissed")
+	
+	if w.lastValue == nil {
+		return nil, fmt.Errorf("no value available")
 	}
-
-	content, err := w.contract.Get(w.key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load content: %w", err)
-	}
-
-	return w.parseFunc(content)
+	
+	return *w.lastValue, nil
 }
 
-// Dismiss stops watching and cleans up resources
-func (w *watcher[T]) Dismiss() error {
+// Dismiss stops watching and cleans up
+func (w *simpleWatcher[T]) Dismiss() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
+	
 	if w.state == stateDismissed {
-		return nil
+		return nil // Already dismissed
 	}
-
-	// Stop throttle timer if running
+	
+	// Stop throttle timer
 	if w.throttleTimer != nil {
 		w.throttleTimer.Stop()
-		w.throttleTimer = nil
 	}
-
-	// Unsubscribe from hodor events
-	if w.subscriptionID != "" {
-		if err := w.contract.Unsubscribe(w.subscriptionID); err != nil {
-			zlog.Warn("Failed to unsubscribe from hodor events", 
-				zlog.String("key", w.key),
-				zlog.Err(err))
-		}
+	
+	// Unsubscribe from depot
+	if err := w.provider.Unsubscribe(w.subscription); err != nil {
+		zlog.Warn("Failed to unsubscribe", 
+			zlog.String("uri", w.uri),
+			zlog.Err(err))
 	}
-
+	
 	w.state = stateDismissed
-	zlog.Info("Dismissed watcher", zlog.String("key", w.key))
+	zlog.Debug("Dismissed flux watcher", zlog.String("uri", w.uri))
 	
 	return nil
 }
 
-// IsActive returns true if watching (active, recovering, or paused)
-func (w *watcher[T]) IsActive() bool {
+// IsActive returns true if watching
+func (w *simpleWatcher[T]) IsActive() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.state != stateDismissed
 }
 
-// IsRecovering returns true if in recovery mode due to parse error
-func (w *watcher[T]) IsRecovering() bool {
+// IsRecovering returns true if in recovery mode
+func (w *simpleWatcher[T]) IsRecovering() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.state == stateRecovering
 }
 
-// Pause temporarily stops callback execution while continuing to watch
-func (w *watcher[T]) Pause() error {
+// Pause stops callback execution
+func (w *simpleWatcher[T]) Pause() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
+	
 	if w.state == stateDismissed {
 		return fmt.Errorf("cannot pause dismissed watcher")
 	}
-
+	
 	w.state = statePaused
-	zlog.Debug("Paused watcher", zlog.String("key", w.key))
 	return nil
 }
 
-// Resume restarts callback execution from paused state
-func (w *watcher[T]) Resume() error {
+// Resume restarts callback execution
+func (w *simpleWatcher[T]) Resume() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
+	
 	if w.state == stateDismissed {
 		return fmt.Errorf("cannot resume dismissed watcher")
 	}
-
-	if w.state == statePaused {
-		w.state = stateActive
-		zlog.Debug("Resumed watcher", zlog.String("key", w.key))
-	}
-
+	
+	w.state = stateActive
 	return nil
 }
 
-// IsPaused returns true if watcher is in paused state
-func (w *watcher[T]) IsPaused() bool {
+// IsPaused returns true if paused
+func (w *simpleWatcher[T]) IsPaused() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.state == statePaused

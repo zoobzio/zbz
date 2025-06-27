@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// This example demonstrates how hodor integrates with cereal for object metadata serialization
+// This example demonstrates how depot integrates with cereal for object metadata serialization
 
 // Mock interfaces for demonstration
-type HodorProvider interface {
+type DepotProvider interface {
 	Set(key string, data []byte, ttl interface{}) error
 	Get(key string) ([]byte, error)
 	Delete(key string) error
@@ -26,22 +26,22 @@ type CerealProvider interface {
 	Format() string
 }
 
-// CerealHodor demonstrates hodor integration with cereal for metadata serialization
-type CerealHodor struct {
-	hodorProvider  HodorProvider
+// CerealDepot demonstrates depot integration with cereal for metadata serialization
+type CerealDepot struct {
+	depotProvider  DepotProvider
 	cerealProvider CerealProvider
 }
 
-// NewCerealHodor creates a new hodor service with cereal integration
-func NewCerealHodor(hodor HodorProvider, cereal CerealProvider) *CerealHodor {
-	return &CerealHodor{
-		hodorProvider:  hodor,
+// NewCerealDepot creates a new depot service with cereal integration
+func NewCerealDepot(depot DepotProvider, cereal CerealProvider) *CerealDepot {
+	return &CerealDepot{
+		depotProvider:  depot,
 		cerealProvider: cereal,
 	}
 }
 
 // SetWithMetadata stores data with structured metadata using cereal serialization
-func (ch *CerealHodor) SetWithMetadata(key string, data []byte, metadata interface{}) error {
+func (ch *CerealDepot) SetWithMetadata(key string, data []byte, metadata interface{}) error {
 	// Serialize metadata using cereal
 	metadataBytes, err := ch.cerealProvider.Marshal(metadata)
 	if err != nil {
@@ -60,14 +60,14 @@ func (ch *CerealHodor) SetWithMetadata(key string, data []byte, metadata interfa
 		return fmt.Errorf("failed to serialize payload: %w", err)
 	}
 	
-	// Store in hodor
-	return ch.hodorProvider.Set(key, payloadBytes, 0)
+	// Store in depot
+	return ch.depotProvider.Set(key, payloadBytes, 0)
 }
 
 // GetWithMetadata retrieves data and deserializes metadata using cereal
-func (ch *CerealHodor) GetWithMetadata(key string, metadata interface{}) ([]byte, error) {
-	// Get from hodor
-	payloadBytes, err := ch.hodorProvider.Get(key)
+func (ch *CerealDepot) GetWithMetadata(key string, metadata interface{}) ([]byte, error) {
+	// Get from depot
+	payloadBytes, err := ch.depotProvider.Get(key)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (ch *CerealHodor) GetWithMetadata(key string, metadata interface{}) ([]byte
 }
 
 // SetWithScopedMetadata stores data with scoped metadata (filters sensitive fields)
-func (ch *CerealHodor) SetWithScopedMetadata(key string, data []byte, metadata interface{}, userPermissions []string) error {
+func (ch *CerealDepot) SetWithScopedMetadata(key string, data []byte, metadata interface{}, userPermissions []string) error {
 	// Serialize metadata with scoping using cereal
 	metadataBytes, err := ch.cerealProvider.MarshalScoped(metadata, userPermissions)
 	if err != nil {
@@ -110,14 +110,14 @@ func (ch *CerealHodor) SetWithScopedMetadata(key string, data []byte, metadata i
 		return fmt.Errorf("failed to serialize payload: %w", err)
 	}
 	
-	// Store in hodor
-	return ch.hodorProvider.Set(key, payloadBytes, 0)
+	// Store in depot
+	return ch.depotProvider.Set(key, payloadBytes, 0)
 }
 
 // GetWithScopedMetadata retrieves data with scoped metadata deserialization
-func (ch *CerealHodor) GetWithScopedMetadata(key string, metadata interface{}, userPermissions []string) ([]byte, error) {
-	// Get from hodor
-	payloadBytes, err := ch.hodorProvider.Get(key)
+func (ch *CerealDepot) GetWithScopedMetadata(key string, metadata interface{}, userPermissions []string) ([]byte, error) {
+	// Get from depot
+	payloadBytes, err := ch.depotProvider.Get(key)
 	if err != nil {
 		return nil, err
 	}
@@ -141,21 +141,21 @@ func (ch *CerealHodor) GetWithScopedMetadata(key string, metadata interface{}, u
 }
 
 // SetJSON stores a JSON object using cereal serialization
-func (ch *CerealHodor) SetJSON(key string, object interface{}) error {
+func (ch *CerealDepot) SetJSON(key string, object interface{}) error {
 	// Serialize object using cereal
 	data, err := ch.cerealProvider.Marshal(object)
 	if err != nil {
 		return fmt.Errorf("failed to serialize object: %w", err)
 	}
 	
-	// Store in hodor
-	return ch.hodorProvider.Set(key, data, 0)
+	// Store in depot
+	return ch.depotProvider.Set(key, data, 0)
 }
 
 // GetJSON retrieves and deserializes a JSON object using cereal
-func (ch *CerealHodor) GetJSON(key string, target interface{}) error {
-	// Get from hodor
-	data, err := ch.hodorProvider.Get(key)
+func (ch *CerealDepot) GetJSON(key string, target interface{}) error {
+	// Get from depot
+	data, err := ch.depotProvider.Get(key)
 	if err != nil {
 		return err
 	}
@@ -165,21 +165,21 @@ func (ch *CerealHodor) GetJSON(key string, target interface{}) error {
 }
 
 // SetJSONScoped stores a JSON object with field-level scoping
-func (ch *CerealHodor) SetJSONScoped(key string, object interface{}, userPermissions []string) error {
+func (ch *CerealDepot) SetJSONScoped(key string, object interface{}, userPermissions []string) error {
 	// Serialize object with scoping using cereal
 	data, err := ch.cerealProvider.MarshalScoped(object, userPermissions)
 	if err != nil {
 		return fmt.Errorf("failed to serialize scoped object: %w", err)
 	}
 	
-	// Store in hodor
-	return ch.hodorProvider.Set(key, data, 0)
+	// Store in depot
+	return ch.depotProvider.Set(key, data, 0)
 }
 
 // GetJSONScoped retrieves and deserializes a JSON object with scoping
-func (ch *CerealHodor) GetJSONScoped(key string, target interface{}, userPermissions []string) error {
-	// Get from hodor
-	data, err := ch.hodorProvider.Get(key)
+func (ch *CerealDepot) GetJSONScoped(key string, target interface{}, userPermissions []string) error {
+	// Get from depot
+	data, err := ch.depotProvider.Get(key)
 	if err != nil {
 		return err
 	}
@@ -226,42 +226,42 @@ type UserProfile struct {
 }
 
 // Mock implementations
-type MockHodor struct {
+type MockDepot struct {
 	data map[string][]byte
 }
 
-func NewMockHodor() *MockHodor {
-	return &MockHodor{
+func NewMockDepot() *MockDepot {
+	return &MockDepot{
 		data: make(map[string][]byte),
 	}
 }
 
-func (m *MockHodor) Set(key string, data []byte, ttl interface{}) error {
+func (m *MockDepot) Set(key string, data []byte, ttl interface{}) error {
 	m.data[key] = data
-	fmt.Printf("Hodor: Stored %d bytes at key '%s'\n", len(data), key)
+	fmt.Printf("Depot: Stored %d bytes at key '%s'\n", len(data), key)
 	return nil
 }
 
-func (m *MockHodor) Get(key string) ([]byte, error) {
+func (m *MockDepot) Get(key string) ([]byte, error) {
 	data, exists := m.data[key]
 	if !exists {
 		return nil, fmt.Errorf("key not found: %s", key)
 	}
-	fmt.Printf("Hodor: Retrieved %d bytes from key '%s'\n", len(data), key)
+	fmt.Printf("Depot: Retrieved %d bytes from key '%s'\n", len(data), key)
 	return data, nil
 }
 
-func (m *MockHodor) Delete(key string) error {
+func (m *MockDepot) Delete(key string) error {
 	delete(m.data, key)
 	return nil
 }
 
-func (m *MockHodor) Exists(key string) (bool, error) {
+func (m *MockDepot) Exists(key string) (bool, error) {
 	_, exists := m.data[key]
 	return exists, nil
 }
 
-func (m *MockHodor) List(prefix string) ([]string, error) {
+func (m *MockDepot) List(prefix string) ([]string, error) {
 	var keys []string
 	for key := range m.data {
 		if len(prefix) == 0 || key[:len(prefix)] == prefix {
@@ -271,7 +271,7 @@ func (m *MockHodor) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
-func (m *MockHodor) GetProvider() string {
+func (m *MockDepot) GetProvider() string {
 	return "mock"
 }
 
@@ -340,13 +340,13 @@ func contains(slice []string, item string) bool {
 }
 
 func main() {
-	fmt.Println("🗄️  Cereal-Hodor Integration Demo")
+	fmt.Println("🗄️  Cereal-Depot Integration Demo")
 	fmt.Println("=================================")
 	
 	// Set up services
-	hodor := NewMockHodor()
+	depot := NewMockDepot()
 	cereal := &MockCereal{}
-	storage := NewCerealHodor(hodor, cereal)
+	storage := NewCerealDepot(depot, cereal)
 	
 	fmt.Println("\n📄 File Storage with Metadata:")
 	
@@ -472,7 +472,7 @@ func main() {
 		fmt.Println("✅ Classified document retrieved with appropriate permissions")
 	}
 	
-	fmt.Println("\n🎉 Cereal-Hodor Integration Demo Complete!")
+	fmt.Println("\n🎉 Cereal-Depot Integration Demo Complete!")
 	fmt.Println("==========================================")
 	fmt.Println("Key Benefits Demonstrated:")
 	fmt.Println("✅ Unified serialization for object metadata")

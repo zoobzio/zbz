@@ -1,7 +1,7 @@
 package docula
 
 import (
-	"zbz/hodor"
+	"zbz/depot"
 )
 
 // DoculaContract defines the configuration for the living documentation system
@@ -9,8 +9,8 @@ type DoculaContract struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description,omitempty"`
 	
-	// Hodor storage for markdown content
-	Storage *hodor.HodorContract `yaml:"storage,omitempty"`
+	// Depot storage for markdown content
+	Storage *depot.DepotContract `yaml:"storage,omitempty"`
 	
 	// UI configuration
 	DocsUI *DocsUIConfig `yaml:"docs_ui,omitempty"`

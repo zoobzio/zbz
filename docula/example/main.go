@@ -6,7 +6,7 @@ import (
 	"time"
 
 	docula "zbz/docula/v2"
-	"zbz/hodor"
+	"zbz/depot"
 )
 
 func main() {
@@ -14,7 +14,7 @@ func main() {
 	fmt.Println("====================")
 
 	// Create memory storage contract
-	memoryContract := hodor.NewMemory(map[string]interface{}{})
+	memoryContract := depot.NewMemory(map[string]interface{}{})
 	
 	// Populate with sample markdown files
 	sampleFiles := map[string]string{
@@ -164,7 +164,7 @@ We're thrilled to announce the release of **Docula V2**, our most ambitious upda
 Your docs now update automatically when you change markdown files in cloud storage. No more manual deploys!
 
 ### ☁️ Cloud-Native Storage
-Store your documentation in S3, GCS, MinIO, or any Hodor-supported provider.
+Store your documentation in S3, GCS, MinIO, or any Depot-supported provider.
 
 ### ⚡ Reactive Updates
 Thanks to our Flux integration, changes appear instantly across all documentation sites.

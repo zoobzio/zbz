@@ -1,9 +1,7 @@
 package docula
 
 import (
-	"encoding/json"
-
-	"gopkg.in/yaml.v2"
+	"zbz/cereal"
 )
 
 // OpenAPISpec represents a complete OpenAPI 3.1.0 specification
@@ -190,7 +188,7 @@ func (sg *SpecGenerator) GetYAML() ([]byte, error) {
 		return sg.cachedYAML, nil
 	}
 	
-	yamlData, err := yaml.Marshal(sg.spec)
+	yamlData, err := cereal.YAML.Marshal(sg.spec)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +203,7 @@ func (sg *SpecGenerator) GetJSON() ([]byte, error) {
 		return sg.cachedJSON, nil
 	}
 	
-	jsonData, err := json.MarshalIndent(sg.spec, "", "  ")
+	jsonData, err := cereal.JSON.Marshal(sg.spec)
 	if err != nil {
 		return nil, err
 	}

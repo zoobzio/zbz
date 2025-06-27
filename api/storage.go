@@ -1,21 +1,21 @@
 package zbz
 
-import "zbz/hodor"
+import "zbz/depot"
 
 // Export storage types and functions for public API
 
 // BucketService is the main storage interface
-type BucketService = hodor.BucketService
+type BucketService = depot.BucketService
 
 // BucketDriver defines the interface for bucket driver implementations
-type BucketDriver = hodor.BucketDriver
+type BucketDriver = depot.BucketDriver
 
 // GetDriver returns a registered bucket driver by name
 func GetDriver(name string) (BucketDriver, bool) {
-	return hodor.GetDriver(name)
+	return depot.GetDriver(name)
 }
 
 // ListDrivers returns all registered driver names
 func ListDrivers() []string {
-	return hodor.ListDrivers()
+	return depot.ListDrivers()
 }

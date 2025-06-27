@@ -17,9 +17,9 @@ func main() {
 		zlog.Fatal("Failed to initialize tracer", zlog.Err(err))
 	}
 	
-	// Test hodor + flux integration before starting server
-	zlog.Info("Running hodor + flux integration test")
-	testHodorFluxIntegration()
+	// Test depot + flux integration before starting server
+	zlog.Info("Running depot + flux integration test")
+	testDepotFluxIntegration()
 	
 	// Users can optionally add their own remark directories:
 	// zbz.Remark.AddPath("docs/custom")

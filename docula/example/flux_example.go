@@ -6,7 +6,7 @@ import (
 	"time"
 
 	docula "zbz/docula/v2"
-	"zbz/hodor"
+	"zbz/depot"
 )
 
 func main() {
@@ -14,7 +14,7 @@ func main() {
 	fmt.Println("========================================")
 
 	// Create memory storage contract
-	memoryContract := hodor.NewMemory(map[string]interface{}{})
+	memoryContract := depot.NewMemory(map[string]interface{}{})
 	
 	// Populate with sample markdown files including API documentation
 	sampleFiles := map[string]string{

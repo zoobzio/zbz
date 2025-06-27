@@ -6,13 +6,13 @@ import (
 	"time"
 	
 	// Import services
-	"zbz/cache"
-	"zbz/hodor"
+	"zbz/pocket"
+	"zbz/depot"
 	"zbz/zlog"
 	
 	// Import providers for each service
-	cacheredis "zbz/providers/cache-redis"
-	hodors3 "zbz/providers/hodor-s3"
+	pocketredis "zbz/providers/pocket-redis"
+	depots3 "zbz/providers/depot-s3"
 	zlogzap "zbz/providers/zlog-zap"
 	zlogzerolog "zbz/providers/zlog-zerolog"
 )
@@ -22,7 +22,7 @@ func main() {
 	fmt.Println("====================================")
 
 	// Universal Configurations - provider-agnostic!
-	cacheConfig := cache.CacheConfig{
+	pocketConfig := pocket.CacheConfig{
 		DefaultTTL:       1 * time.Hour,
 		KeyPrefix:        "demo:",
 		Serialization:    "json",
@@ -36,7 +36,7 @@ func main() {
 		BaseDir:          "/tmp/demo-cache",  // Used by filesystem provider
 	}
 
-	hodorConfig := hodor.HodorConfig{
+	depotConfig := depot.DepotConfig{
 		BasePath:   "demo/",
 		BufferSize: 1024 * 1024,
 		Bucket:     "my-demo-bucket",
@@ -61,36 +61,36 @@ func main() {
 		},
 	}
 
-	// 1. Cache Service with Redis
-	fmt.Println("\n📦 Setting up Cache with Redis...")
-	cacheContract, err := cacheredis.NewRedisCache(cacheConfig)
+	// 1. Pocket Service with Redis
+	fmt.Println("\n📦 Setting up Pocket with Redis...")
+	pocketContract, err := pocketredis.NewRedisCache(pocketConfig)
 	if err != nil {
-		fmt.Printf("❌ Failed to create Redis cache: %v\n", err)
+		fmt.Printf("❌ Failed to create Redis pocket: %v\n", err)
 		return
 	}
 
 	// Register as singleton
-	err = cacheContract.Register()
+	err = pocketContract.Register()
 	if err != nil {
-		fmt.Printf("❌ Failed to register cache: %v\n", err)
+		fmt.Printf("❌ Failed to register pocket: %v\n", err)
 		return
 	}
 
 	// Use package functions (singleton)
-	err = cache.Set(context.Background(), "test", []byte("hello cache"))
+	err = pocket.Set(context.Background(), "test", []byte("hello cache"))
 	if err != nil {
-		fmt.Printf("❌ Cache set failed: %v\n", err)
+		fmt.Printf("❌ Pocket set failed: %v\n", err)
 	} else {
-		fmt.Println("✅ Cache set successful")
+		fmt.Println("✅ Pocket set successful")
 	}
 
 	// Type-safe native access
-	redisClient := cacheContract.Native() // redis.Cmdable - no casting!
+	redisClient := pocketContract.Native() // redis.Cmdable - no casting!
 	fmt.Printf("✅ Redis client type: %T\n", redisClient)
 
 	// 2. Storage Service with S3
 	fmt.Println("\n📁 Setting up Storage with S3...")
-	storageContract, err := hodors3.NewS3Storage(hodorConfig)
+	storageContract, err := depots3.NewS3Storage(depotConfig)
 	if err != nil {
 		fmt.Printf("❌ Failed to create S3 storage: %v\n", err)
 		return
@@ -103,7 +103,7 @@ func main() {
 	}
 
 	// Use package functions (singleton)
-	err = hodor.Set("demo.txt", []byte("hello storage"), 0)
+	err = depot.Set("demo.txt", []byte("hello storage"), 0)
 	if err != nil {
 		fmt.Printf("❌ Storage set failed: %v\n", err)
 	} else {

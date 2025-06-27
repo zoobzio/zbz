@@ -7,80 +7,56 @@ import (
 	"sync"
 	"time"
 
-	"zbz/hodor"
+	"zbz/depot"
 	"zbz/zlog"
 )
 
-// CollectionWatcher manages watching multiple files matching a pattern
-type CollectionWatcher struct {
-	contract    *hodor.HodorContract
-	pattern     string
-	callback    func(old, new map[string][]byte)
+// collectionWatcher manages watching multiple files matching a pattern with typed parsing
+type collectionWatcher[T any] struct {
+	provider  depot.DepotProvider
+	pattern   string
+	callbacks []func(old, new map[string]T, err error)
+	options   FluxOptions
 	
-	// Current state
-	mu           sync.RWMutex
-	currentFiles map[string][]byte
-	subscriptions map[string]hodor.SubscriptionID
+	// State management
+	mu            sync.RWMutex
+	currentFiles  map[string]T
+	subscriptions map[string]depot.SubscriptionID
+	state         watcherState
 	
-	// Configuration
+	// Throttling
+	throttleTimer    *time.Timer
 	throttleDuration time.Duration
-	lastUpdate      time.Time
-	
-	// Control
-	active bool
 }
 
-// SyncCollection watches all files matching a pattern in hodor storage
-func SyncCollection(contract *hodor.HodorContract, pattern string, callback func(old, new map[string][]byte), options ...FluxOptions) (*CollectionWatcher, error) {
-	// Apply options
-	var opts FluxOptions
-	if len(options) > 0 {
-		opts = options[0]
-	}
+// startWatching initializes the collection watcher
+func (cw *collectionWatcher[T]) startWatching() error {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
 	
-	// Set default throttle duration
-	throttleDuration := 100 * time.Millisecond
-	if opts.ThrottleDuration != nil {
-		throttleDuration = *opts.ThrottleDuration
-	}
-	
-	watcher := &CollectionWatcher{
-		contract:         contract,
-		pattern:          pattern,
-		callback:         callback,
-		currentFiles:     make(map[string][]byte),
-		subscriptions:    make(map[string]hodor.SubscriptionID),
-		throttleDuration: throttleDuration,
-		active:           true,
-	}
-	
-	// Load initial files
-	if err := watcher.loadInitialFiles(); err != nil {
-		return nil, fmt.Errorf("failed to load initial files: %w", err)
+	// Load initial files and validate homogeneity
+	if err := cw.loadInitialFiles(); err != nil {
+		return fmt.Errorf("failed to load initial files: %w", err)
 	}
 	
 	// Set up subscriptions for current files
-	if err := watcher.setupSubscriptions(); err != nil {
-		return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
+	if err := cw.setupSubscriptions(); err != nil {
+		return fmt.Errorf("failed to setup subscriptions: %w", err)
 	}
 	
-	// Call initial callback if not skipped
-	if !opts.SkipInitialCallback {
-		callback(make(map[string][]byte), watcher.currentFiles)
+	// Call initial callbacks with empty old state (no error on successful load)
+	if !cw.options.SkipInitialCallback {
+		emptyState := make(map[string]T)
+		executeCollectionCallbacks(cw.callbacks, emptyState, cw.currentFiles, nil)
 	}
 	
-	zlog.Info("Created collection watcher", 
-		zlog.String("pattern", pattern),
-		zlog.String("provider", contract.GetProvider()),
-		zlog.Int("initial_files", len(watcher.currentFiles)))
-	
-	return watcher, nil
+	return nil
 }
 
 // loadInitialFiles discovers and loads all files matching the pattern
-func (cw *CollectionWatcher) loadInitialFiles() error {
+func (cw *collectionWatcher[T]) loadInitialFiles() error {
 	// List all files in storage
-	allFiles, err := cw.contract.List("")
+	allFiles, err := cw.provider.List("")
 	if err != nil {
 		return fmt.Errorf("failed to list files: %w", err)
 	}
@@ -88,9 +64,14 @@ func (cw *CollectionWatcher) loadInitialFiles() error {
 	// Filter files matching pattern
 	matchingFiles := cw.filterFiles(allFiles)
 	
-	// Load content for each matching file
+	// Validate homogeneous file extensions
+	if err := cw.validateHomogeneousCollection(matchingFiles); err != nil {
+		return err
+	}
+	
+	// Load and parse content for each matching file
 	for _, filePath := range matchingFiles {
-		content, err := cw.contract.Get(filePath)
+		content, err := cw.provider.Get(filePath)
 		if err != nil {
 			zlog.Warn("Failed to load file in collection", 
 				zlog.String("file", filePath), 
@@ -98,15 +79,68 @@ func (cw *CollectionWatcher) loadInitialFiles() error {
 			continue
 		}
 		
-		cw.currentFiles[filePath] = content
-		zlog.Debug("Loaded file into collection", zlog.String("file", filePath))
+		// Validate content if security validation is enabled
+		if !cw.options.SkipSecurityValidation {
+			if err := validateContent(content, filePath, cw.options.MaxFileSize); err != nil {
+				zlog.Warn("Security validation failed for file in collection", 
+					zlog.String("file", filePath), 
+					zlog.Err(err))
+				continue
+			}
+		}
+
+		// Parse using document-aware parsing
+		parsed, err := parseByExtension[T](content, filePath)
+		if err != nil {
+			zlog.Warn("Failed to parse file in collection", 
+				zlog.String("file", filePath), 
+				zlog.Err(err))
+			continue
+		}
+		
+		cw.currentFiles[filePath] = parsed
+		zlog.Debug("Loaded file into typed collection", zlog.String("file", filePath))
 	}
 	
 	return nil
 }
 
+// validateHomogeneousCollection ensures all files have the same extension
+func (cw *collectionWatcher[T]) validateHomogeneousCollection(files []string) error {
+	if len(files) == 0 {
+		return nil // Empty collections are valid
+	}
+	
+	// Get extension from first file
+	firstExt := strings.ToLower(filepath.Ext(files[0]))
+	
+	// Validate all files have the same extension
+	for _, file := range files[1:] {
+		ext := strings.ToLower(filepath.Ext(file))
+		if ext != firstExt {
+			return fmt.Errorf("heterogeneous collection detected: mixed extensions '%s' and '%s' - collections must contain files of the same type", firstExt, ext)
+		}
+	}
+	
+	// Validate extension is supported for structured data
+	switch firstExt {
+	case ".json", ".yaml", ".yml", ".toml":
+		// Supported structured formats
+	case ".txt", ".md", "":
+		// Supported text formats
+	default:
+		return fmt.Errorf("unsupported file extension '%s' for collections", firstExt)
+	}
+	
+	zlog.Debug("Validated homogeneous collection", 
+		zlog.String("extension", firstExt),
+		zlog.Int("file_count", len(files)))
+	
+	return nil
+}
+
 // filterFiles returns files that match the pattern
-func (cw *CollectionWatcher) filterFiles(files []string) []string {
+func (cw *collectionWatcher[T]) filterFiles(files []string) []string {
 	var matching []string
 	
 	for _, file := range files {
@@ -131,8 +165,8 @@ func (cw *CollectionWatcher) filterFiles(files []string) []string {
 	return matching
 }
 
-// setupSubscriptions creates hodor subscriptions for all current files
-func (cw *CollectionWatcher) setupSubscriptions() error {
+// setupSubscriptions creates depot subscriptions for all current files
+func (cw *collectionWatcher[T]) setupSubscriptions() error {
 	for filePath := range cw.currentFiles {
 		if err := cw.subscribeToFile(filePath); err != nil {
 			zlog.Warn("Failed to subscribe to file", 
@@ -144,9 +178,9 @@ func (cw *CollectionWatcher) setupSubscriptions() error {
 }
 
 // subscribeToFile creates a subscription for a specific file
-func (cw *CollectionWatcher) subscribeToFile(filePath string) error {
-	subscriptionID, err := cw.contract.Subscribe(filePath, func(event hodor.ChangeEvent) {
-		cw.handleFileChange(filePath, event)
+func (cw *collectionWatcher[T]) subscribeToFile(filePath string) error {
+	subscriptionID, err := cw.provider.Subscribe(filePath, func(event depot.ChangeEvent) {
+		cw.handleDepotEvent(filePath, event)
 	})
 	if err != nil {
 		return err
@@ -156,63 +190,120 @@ func (cw *CollectionWatcher) subscribeToFile(filePath string) error {
 	return nil
 }
 
-// handleFileChange processes individual file changes and triggers collection updates
-func (cw *CollectionWatcher) handleFileChange(filePath string, event hodor.ChangeEvent) {
-	if !cw.active {
-		return
-	}
-	
-	// Throttle updates to avoid excessive callback calls
-	cw.mu.Lock()
-	now := time.Now()
-	if now.Sub(cw.lastUpdate) < cw.throttleDuration {
-		cw.mu.Unlock()
-		return
-	}
-	cw.lastUpdate = now
-	cw.mu.Unlock()
-	
-	// Small delay to allow multiple rapid changes to accumulate
-	time.AfterFunc(50*time.Millisecond, func() {
-		cw.processChanges()
-	})
-}
-
-// processChanges scans for all changes and triggers the callback
-func (cw *CollectionWatcher) processChanges() {
-	if !cw.active {
-		return
-	}
-	
+// handleDepotEvent processes depot change events for collection files
+func (cw *collectionWatcher[T]) handleDepotEvent(filePath string, event depot.ChangeEvent) {
+	// All events (create, update, delete) are relevant for collections
+	// We'll let processCollectionChanges handle the full scan
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
 	
+	// Skip if dismissed or paused
+	if cw.state == stateDismissed || cw.state == statePaused {
+		return
+	}
+	
+	// Throttle rapid changes
+	if cw.throttleTimer != nil {
+		cw.throttleTimer.Stop()
+	}
+	
+	cw.throttleTimer = time.AfterFunc(cw.throttleDuration, func() {
+		cw.processCollectionChanges()
+	})
+}
+
+// handleFileChange processes individual file changes (legacy method for internal use)
+func (cw *collectionWatcher[T]) handleFileChange(filePath string, content []byte) {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	
+	// Skip if dismissed or paused
+	if cw.state == stateDismissed || cw.state == statePaused {
+		return
+	}
+	
+	// Throttle rapid changes
+	if cw.throttleTimer != nil {
+		cw.throttleTimer.Stop()
+	}
+	
+	cw.throttleTimer = time.AfterFunc(cw.throttleDuration, func() {
+		cw.processCollectionChanges()
+	})
+}
+
+// processCollectionChanges scans for all changes and triggers callbacks
+func (cw *collectionWatcher[T]) processCollectionChanges() {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	
+	// Skip if dismissed or paused
+	if cw.state == stateDismissed || cw.state == statePaused {
+		return
+	}
+	
 	// Capture old state
-	oldFiles := make(map[string][]byte)
+	oldFiles := make(map[string]T)
 	for k, v := range cw.currentFiles {
-		oldFiles[k] = append([]byte(nil), v...) // Deep copy
+		oldFiles[k] = v
 	}
 	
 	// Scan for current files matching pattern
-	allFiles, err := cw.contract.List("")
+	allFiles, err := cw.provider.List("")
 	if err != nil {
 		zlog.Warn("Failed to list files during change processing", zlog.Err(err))
 		return
 	}
 	
 	matchingFiles := cw.filterFiles(allFiles)
-	newFiles := make(map[string][]byte)
 	
-	// Load current content for all matching files
+	// Validate homogeneity of new file set
+	if err := cw.validateHomogeneousCollection(matchingFiles); err != nil {
+		zlog.Error("Collection homogeneity violation during update", zlog.Err(err))
+		// Enter recovery mode and notify callbacks of error
+		cw.state = stateRecovering
+		executeCollectionCallbacks(cw.callbacks, oldFiles, oldFiles, err)
+		return
+	}
+	
+	newFiles := make(map[string]T)
+	
+	// Load and parse current content for all matching files
 	for _, filePath := range matchingFiles {
-		content, err := cw.contract.Get(filePath)
+		content, err := cw.provider.Get(filePath)
 		if err != nil {
 			zlog.Warn("Failed to load file during change processing", 
 				zlog.String("file", filePath), 
 				zlog.Err(err))
 			continue
 		}
-		newFiles[filePath] = content
+		
+		// Validate content if security validation is enabled
+		if !cw.options.SkipSecurityValidation {
+			if err := validateContent(content, filePath, cw.options.MaxFileSize); err != nil {
+				zlog.Warn("Security validation failed during change processing", 
+					zlog.String("file", filePath), 
+					zlog.Err(err))
+				// Enter recovery mode on security error and notify callbacks
+				cw.state = stateRecovering
+				executeCollectionCallbacks(cw.callbacks, oldFiles, oldFiles, fmt.Errorf("security validation failed in file %s: %w", filePath, err))
+				return
+			}
+		}
+
+		// Parse using document-aware parsing
+		parsed, err := parseByExtension[T](content, filePath)
+		if err != nil {
+			zlog.Warn("Failed to parse file during change processing", 
+				zlog.String("file", filePath), 
+				zlog.Err(err))
+			// Enter recovery mode on parse error and notify callbacks
+			cw.state = stateRecovering
+			executeCollectionCallbacks(cw.callbacks, oldFiles, oldFiles, fmt.Errorf("parse error in file %s: %w", filePath, err))
+			return
+		}
+		
+		newFiles[filePath] = parsed
 		
 		// Subscribe to new files
 		if _, exists := cw.subscriptions[filePath]; !exists {
@@ -227,9 +318,15 @@ func (cw *CollectionWatcher) processChanges() {
 	// Unsubscribe from removed files
 	for filePath, subscriptionID := range cw.subscriptions {
 		if _, exists := newFiles[filePath]; !exists {
-			cw.contract.Unsubscribe(subscriptionID)
+			cw.provider.Unsubscribe(subscriptionID)
 			delete(cw.subscriptions, filePath)
 		}
+	}
+	
+	// Exit recovery mode if we were in it
+	if cw.state == stateRecovering {
+		cw.state = stateActive
+		zlog.Info("Collection recovered from error", zlog.String("pattern", cw.pattern))
 	}
 	
 	// Update current state
@@ -237,30 +334,31 @@ func (cw *CollectionWatcher) processChanges() {
 	
 	// Check if there are actual changes
 	if cw.hasChanges(oldFiles, newFiles) {
-		zlog.Debug("Collection changed, triggering callback", 
+		zlog.Debug("Typed collection changed, triggering callbacks", 
 			zlog.Int("old_count", len(oldFiles)),
 			zlog.Int("new_count", len(newFiles)))
 		
-		// Trigger callback
-		go cw.callback(oldFiles, newFiles)
+		// Execute all callbacks independently with no error (successful parse)
+		executeCollectionCallbacks(cw.callbacks, oldFiles, newFiles, nil)
 	}
 }
 
 // hasChanges compares old and new file collections
-func (cw *CollectionWatcher) hasChanges(old, new map[string][]byte) bool {
+func (cw *collectionWatcher[T]) hasChanges(old, new map[string]T) bool {
 	// Different number of files
 	if len(old) != len(new) {
 		return true
 	}
 	
-	// Check for content changes
-	for path, newContent := range new {
-		oldContent, exists := old[path]
+	// Check for content changes (using string comparison for simplicity)
+	for path, newValue := range new {
+		oldValue, exists := old[path]
 		if !exists {
 			return true // New file
 		}
 		
-		if string(oldContent) != string(newContent) {
+		// Use string representation for comparison
+		if fmt.Sprintf("%+v", oldValue) != fmt.Sprintf("%+v", newValue) {
 			return true // Content changed
 		}
 	}
@@ -275,55 +373,112 @@ func (cw *CollectionWatcher) hasChanges(old, new map[string][]byte) bool {
 	return false
 }
 
-// Stop stops the collection watcher and cleans up subscriptions
-func (cw *CollectionWatcher) Stop() error {
+// FluxContract implementation for typed collections
+
+// Resolve gets the current collection state
+func (cw *collectionWatcher[T]) Resolve() (any, error) {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	
+	// Return a copy of current files
+	result := make(map[string]T)
+	for k, v := range cw.currentFiles {
+		result[k] = v
+	}
+	
+	return result, nil
+}
+
+// Dismiss stops watching and cleans up
+func (cw *collectionWatcher[T]) Dismiss() error {
 	cw.mu.Lock()
 	defer cw.mu.Unlock()
 	
-	cw.active = false
+	if cw.state == stateDismissed {
+		return nil // Already dismissed
+	}
+	
+	// Stop throttle timer
+	if cw.throttleTimer != nil {
+		cw.throttleTimer.Stop()
+	}
 	
 	// Unsubscribe from all files
 	for filePath, subscriptionID := range cw.subscriptions {
-		if err := cw.contract.Unsubscribe(subscriptionID); err != nil {
+		if err := cw.provider.Unsubscribe(subscriptionID); err != nil {
 			zlog.Warn("Failed to unsubscribe from file", 
 				zlog.String("file", filePath), 
 				zlog.Err(err))
 		}
 	}
 	
-	cw.subscriptions = make(map[string]hodor.SubscriptionID)
-	cw.currentFiles = make(map[string][]byte)
+	cw.subscriptions = make(map[string]depot.SubscriptionID)
+	cw.currentFiles = make(map[string]T)
+	cw.state = stateDismissed
 	
-	zlog.Info("Stopped collection watcher", zlog.String("pattern", cw.pattern))
+	zlog.Info("Dismissed typed collection watcher", zlog.String("pattern", cw.pattern))
 	return nil
 }
 
-// GetCurrentFiles returns a copy of the current file collection
-func (cw *CollectionWatcher) GetCurrentFiles() map[string][]byte {
+// IsActive returns true if watching
+func (cw *collectionWatcher[T]) IsActive() bool {
 	cw.mu.RLock()
 	defer cw.mu.RUnlock()
+	return cw.state != stateDismissed
+}
+
+// IsRecovering returns true if in recovery mode
+func (cw *collectionWatcher[T]) IsRecovering() bool {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.state == stateRecovering
+}
+
+// Pause stops callback execution
+func (cw *collectionWatcher[T]) Pause() error {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
 	
-	result := make(map[string][]byte)
-	for k, v := range cw.currentFiles {
-		result[k] = append([]byte(nil), v...) // Deep copy
+	if cw.state == stateDismissed {
+		return fmt.Errorf("cannot pause dismissed watcher")
 	}
-	return result
+	
+	cw.state = statePaused
+	return nil
 }
 
-// AddFile manually adds a file to the collection (useful for testing)
-func (cw *CollectionWatcher) AddFile(path string, content []byte) error {
-	// Store in hodor (this will trigger the normal subscription flow)
-	return cw.contract.Set(path, content, 0)
+// Resume restarts callback execution
+func (cw *collectionWatcher[T]) Resume() error {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	
+	if cw.state == stateDismissed {
+		return fmt.Errorf("cannot resume dismissed watcher")
+	}
+	
+	cw.state = stateActive
+	return nil
 }
 
-// UpdateFile manually updates a file in the collection (useful for testing)
-func (cw *CollectionWatcher) UpdateFile(path string, content []byte) error {
-	// Store in hodor (this will trigger the normal subscription flow)
-	return cw.contract.Set(path, content, 0)
+// IsPaused returns true if paused
+func (cw *collectionWatcher[T]) IsPaused() bool {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.state == statePaused
 }
 
-// RemoveFile manually removes a file from the collection (useful for testing)
-func (cw *CollectionWatcher) RemoveFile(path string) error {
-	// Delete from hodor (this will trigger the normal subscription flow)
-	return cw.contract.Delete(path)
+// executeCollectionCallbacks runs all collection callbacks independently with error information
+func executeCollectionCallbacks[T any](callbacks []func(old, new map[string]T, err error), old, new map[string]T, err error) {
+	for _, callback := range callbacks {
+		// Each callback is independent - if one panics, others still run
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					zlog.Warn("Collection callback panic recovered", 
+						zlog.Any("panic", r))
+				}
+			}()
+			callback(old, new, err)
+		}()
+	}
 }

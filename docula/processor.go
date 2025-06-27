@@ -14,7 +14,7 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
-	"gopkg.in/yaml.v2"
+	"zbz/cereal"
 )
 
 // MarkdownProcessor handles markdown parsing and sanitization
@@ -104,12 +104,12 @@ func (mp *MarkdownProcessor) ParseDocPage(path string, raw []byte) (*DocPage, er
 	// Extract frontmatter
 	if metaData := meta.Get(ctx); metaData != nil {
 		// Convert map[string]interface{} to YAML and back to struct
-		yamlData, err := yaml.Marshal(metaData)
+		yamlData, err := cereal.YAML.Marshal(metaData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal frontmatter: %w", err)
 		}
 
-		if err := yaml.Unmarshal(yamlData, &page); err != nil {
+		if err := cereal.YAML.Unmarshal(yamlData, &page); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal frontmatter: %w", err)
 		}
 	}

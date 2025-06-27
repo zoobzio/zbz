@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"zbz/flux"
-	"zbz/hodor"
+	"zbz/depot"
 	"zbz/zlog"
 )
 
@@ -20,8 +20,8 @@ type Service struct {
 	mu    sync.RWMutex
 	pages map[string]*DocPage
 
-	// Hodor storage
-	storage *hodor.HodorContract
+	// Depot storage
+	storage *depot.DepotContract
 	
 	// OpenAPI spec generator
 	specGenerator *SpecGenerator

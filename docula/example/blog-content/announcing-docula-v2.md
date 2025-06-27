@@ -20,7 +20,7 @@ We're thrilled to announce the release of **Docula V2**, the most significant up
 Your documentation now updates **automatically** when you change markdown files in cloud storage. No more manual builds or deployments!
 
 ### ☁️ Cloud-Native Storage
-Store your documentation in **S3, GCS, MinIO**, or any Hodor-supported provider. Your docs live in the cloud and sync instantly.
+Store your documentation in **S3, GCS, MinIO**, or any Depot-supported provider. Your docs live in the cloud and sync instantly.
 
 ### 🎨 Beautiful Templates
 Choose from **multiple site templates**:
@@ -33,7 +33,7 @@ Your API documentation is now **automatically enhanced** with markdown content, 
 
 ## 💡 The Technology
 
-Docula V2 is powered by our **Flux reactive system** and **Hodor cloud storage**:
+Docula V2 is powered by our **Flux reactive system** and **Depot cloud storage**:
 
 ```go
 // Enable reactive updates with one line

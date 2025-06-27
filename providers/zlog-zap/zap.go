@@ -1,274 +1,177 @@
 package zap
 
 import (
-	"os"
 	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
-
 	"zbz/zlog"
 )
 
-// zapProvider implements ZlogProvider interface using zap
+// zapProvider implements the zlog.ZlogProvider interface using zap
 type zapProvider struct {
 	logger *zap.Logger
 }
 
-// New creates a new zap-based contract with the provided configuration
-func New(config Config) *zlog.ZlogContract[*zap.Logger] {
-	// Apply defaults
-	if config.Level == "" {
-		config.Level = "info"
-	}
-	if config.Format == "" {
-		config.Format = "json"
-	}
-
-	// If no outputs specified, default to console only
-	// File outputs will be ignored unless hodor contract is set later
-	if len(config.Outputs) == 0 {
-		config.Outputs = []OutputConfig{
-			{Type: "console", Level: config.Level, Format: config.Format},
-		}
-	}
-
-	// Create cores for console outputs only initially
-	var cores []zapcore.Core
-	for _, output := range config.Outputs {
-		if output.Type == "console" {
-			core := createZapCore(output, config.Level, config.Format)
-			if core != nil {
-				cores = append(cores, core)
-			}
-		}
-		// Skip file outputs - they require hodor contract
-	}
-
-	// Ensure we have at least console output
-	if len(cores) == 0 {
-		consoleOutput := OutputConfig{
-			Type:   "console",
-			Level:  config.Level,
-			Format: config.Format,
-		}
-		core := createZapCore(consoleOutput, config.Level, config.Format)
-		if core != nil {
-			cores = append(cores, core)
-		}
-	}
-
-	// Combine all cores
-	var finalCore zapcore.Core
-	if len(cores) == 1 {
-		finalCore = cores[0]
-	} else {
-		finalCore = zapcore.NewTee(cores...)
-	}
-
-	// Apply sampling if configured
-	if config.Sampling != nil {
-		finalCore = zapcore.NewSamplerWithOptions(
-			finalCore,
-			time.Second, // Sample per second
-			config.Sampling.Initial,
-			config.Sampling.Thereafter,
-		)
-	}
-
-	zapLog := zap.New(finalCore,
-		zap.AddCaller(),
-		zap.AddCallerSkip(3), // Skip: zapProvider.Info() -> zZlogService.Info() -> zlog.Info() -> user code
-		zap.AddStacktrace(zap.ErrorLevel))
-
-	// Create provider
+// New creates a new zap logger and returns a self-registering zlog contract
+// This automatically becomes the active logger for all zlog-using services
+func New(config zlog.Config) *zlog.Contract[*zap.Logger] {
+	// Create zap logger from universal config
+	zapLogger := createZapLogger(config)
+	
+	// Create provider wrapper
 	provider := &zapProvider{
-		logger: zapLog,
+		logger: zapLogger,
 	}
-
-	// Return contract with both service and typed logger
-	return zlog.NewContract[*zap.Logger](config.Name, provider, zapLog)
+	
+	// Create and return self-registering contract
+	return zlog.NewContract(config, zapLogger, provider)
 }
 
-// Info logs at info level
+// NewDevelopment creates a development zap logger with sensible defaults
+func NewDevelopment() *zlog.Contract[*zap.Logger] {
+	return New(zlog.DevelopmentConfig())
+}
+
+// NewProduction creates a production zap logger with sensible defaults  
+func NewProduction() *zlog.Contract[*zap.Logger] {
+	return New(zlog.ProductionConfig())
+}
+
+// createZapLogger builds a zap logger from Config
+func createZapLogger(config zlog.Config) *zap.Logger {
+	// Convert universal level to zap level
+	var level zapcore.Level
+	switch config.Level {
+	case zlog.DEBUG:
+		level = zapcore.DebugLevel
+	case zlog.INFO:
+		level = zapcore.InfoLevel
+	case zlog.WARN:
+		level = zapcore.WarnLevel
+	case zlog.ERROR:
+		level = zapcore.ErrorLevel
+	case zlog.FATAL:
+		level = zapcore.FatalLevel
+	default:
+		level = zapcore.InfoLevel
+	}
+	
+	// Build zap config based on format
+	var zapConfig zap.Config
+	
+	if config.Format == "console" || config.Console {
+		zapConfig = zap.NewDevelopmentConfig()
+		zapConfig.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		zapConfig = zap.NewProductionConfig()
+	}
+	
+	// Apply universal settings
+	zapConfig.Level = zap.NewAtomicLevelAt(level)
+	
+	// Set encoding based on format
+	if config.Format == "console" {
+		zapConfig.Encoding = "console"
+		zapConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	} else {
+		zapConfig.Encoding = "json"
+		zapConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	}
+	
+	// Use transparent writer for all output - this enables piping
+	transparentWriter := zlog.Writer()
+	
+	// Create core with transparent writer
+	encoder := zapcore.NewJSONEncoder(zapConfig.EncoderConfig)
+	if config.Format == "console" {
+		encoder = zapcore.NewConsoleEncoder(zapConfig.EncoderConfig)
+	}
+	
+	core := zapcore.NewCore(
+		encoder,
+		zapcore.AddSync(transparentWriter),
+		zapConfig.Level,
+	)
+	
+	// Build logger with our transparent core
+	logger := zap.New(core)
+	
+	// Add caller info if not disabled (check for development mode)
+	if config.Console || config.Development {
+		logger = logger.WithOptions(zap.AddCaller())
+	}
+	
+	return logger
+}
+
+// No longer needed - we use Config directly
+
+// ZlogProvider interface implementation
+
+// Info logs an info message with structured fields
 func (z *zapProvider) Info(msg string, fields []zlog.Field) {
-	zapFields := z.convertFields(fields)
-	z.logger.Info(msg, zapFields...)
+	z.logger.Info(msg, convertFields(fields)...)
 }
 
-// Error logs at error level
+// Error logs an error message with structured fields
 func (z *zapProvider) Error(msg string, fields []zlog.Field) {
-	zapFields := z.convertFields(fields)
-	z.logger.Error(msg, zapFields...)
+	z.logger.Error(msg, convertFields(fields)...)
 }
 
-// Debug logs at debug level
+// Debug logs a debug message with structured fields
 func (z *zapProvider) Debug(msg string, fields []zlog.Field) {
-	zapFields := z.convertFields(fields)
-	z.logger.Debug(msg, zapFields...)
+	z.logger.Debug(msg, convertFields(fields)...)
 }
 
-// Warn logs at warn level
+// Warn logs a warning message with structured fields
 func (z *zapProvider) Warn(msg string, fields []zlog.Field) {
-	zapFields := z.convertFields(fields)
-	z.logger.Warn(msg, zapFields...)
+	z.logger.Warn(msg, convertFields(fields)...)
 }
 
-// Fatal logs at fatal level and exits
+// Fatal logs a fatal message with structured fields and exits
 func (z *zapProvider) Fatal(msg string, fields []zlog.Field) {
-	zapFields := z.convertFields(fields)
-	z.logger.Fatal(msg, zapFields...)
+	z.logger.Fatal(msg, convertFields(fields)...)
 }
 
-// Close cleans up the provider
+// Close cleans up the zap logger
 func (z *zapProvider) Close() error {
 	return z.logger.Sync()
 }
 
-
-
-
 // convertFields converts zlog fields to zap fields
-func (z *zapProvider) convertFields(fields []zlog.Field) []zap.Field {
+func convertFields(fields []zlog.Field) []zap.Field {
 	zapFields := make([]zap.Field, len(fields))
-	for i, f := range fields {
-		zapFields[i] = z.convertField(f)
+	
+	for i, field := range fields {
+		switch field.Type {
+		case zlog.StringType:
+			zapFields[i] = zap.String(field.Key, field.Value.(string))
+		case zlog.IntType:
+			zapFields[i] = zap.Int(field.Key, field.Value.(int))
+		case zlog.Int64Type:
+			zapFields[i] = zap.Int64(field.Key, field.Value.(int64))
+		case zlog.Float64Type:
+			zapFields[i] = zap.Float64(field.Key, field.Value.(float64))
+		case zlog.BoolType:
+			zapFields[i] = zap.Bool(field.Key, field.Value.(bool))
+		case zlog.ErrorType:
+			zapFields[i] = zap.Error(field.Value.(error))
+		case zlog.DurationType:
+			zapFields[i] = zap.Duration(field.Key, field.Value.(time.Duration))
+		case zlog.TimeType:
+			zapFields[i] = zap.Time(field.Key, field.Value.(time.Time))
+		case zlog.ByteStringType:
+			zapFields[i] = zap.ByteString(field.Key, []byte(field.Value.(string)))
+		case zlog.StringsType:
+			zapFields[i] = zap.Strings(field.Key, field.Value.([]string))
+		case zlog.AnyType:
+			zapFields[i] = zap.Any(field.Key, field.Value)
+		default:
+			// Fallback for unknown types
+			zapFields[i] = zap.Any(field.Key, field.Value)
+		}
 	}
+	
 	return zapFields
 }
-
-// convertField converts a single zlog field to zap field
-func (z *zapProvider) convertField(f zlog.Field) zap.Field {
-	switch f.Type {
-	case zlog.StringType:
-		return zap.String(f.Key, f.Value.(string))
-	case zlog.IntType:
-		return zap.Int(f.Key, f.Value.(int))
-	case zlog.Int64Type:
-		return zap.Int64(f.Key, f.Value.(int64))
-	case zlog.Float64Type:
-		return zap.Float64(f.Key, f.Value.(float64))
-	case zlog.BoolType:
-		return zap.Bool(f.Key, f.Value.(bool))
-	case zlog.ErrorType:
-		return zap.Error(f.Value.(error))
-	case zlog.DurationType:
-		return zap.Duration(f.Key, f.Value.(time.Duration))
-	case zlog.TimeType:
-		return zap.Time(f.Key, f.Value.(time.Time))
-	case zlog.ByteStringType:
-		return zap.String(f.Key, f.Value.(string))
-	case zlog.AnyType:
-		return zap.Any(f.Key, f.Value)
-	case zlog.StringsType:
-		return zap.Strings(f.Key, f.Value.([]string))
-	default:
-		// Fallback to Any for unknown types (including pipeline types that shouldn't reach here)
-		return zap.Any(f.Key, f.Value)
-	}
-}
-
-// createZapCore creates a zapcore.Core for a specific output configuration
-func createZapCore(output OutputConfig, globalLevel, globalFormat string) zapcore.Core {
-	// Determine level for this output
-	level := output.Level
-	if level == "" {
-		level = globalLevel
-	}
-	zapLevel := parseLogLevel(level)
-
-	// Determine format for this output
-	format := output.Format
-	if format == "" {
-		format = globalFormat
-	}
-	encoder := createEncoder(format)
-
-	// Create writer syncer based on output type
-	var syncer zapcore.WriteSyncer
-	switch output.Type {
-	case "console":
-		syncer = zapcore.AddSync(os.Stdout)
-	case "file":
-		target := output.Target
-		if target == "" {
-			target = ".logs/app.log"
-		}
-		
-		// Check for rotation options
-		maxSize := 10
-		maxBackups := 5
-		maxAge := 7
-		compress := true
-		
-		if options := output.Options; options != nil {
-			if ms, ok := options["max_size"].(int); ok {
-				maxSize = ms
-			}
-			if mb, ok := options["max_backups"].(int); ok {
-				maxBackups = mb
-			}
-			if ma, ok := options["max_age"].(int); ok {
-				maxAge = ma
-			}
-			if c, ok := options["compress"].(bool); ok {
-				compress = c
-			}
-		}
-		
-		syncer = zapcore.AddSync(&lumberjack.Logger{
-			Filename:   target,
-			MaxSize:    maxSize,
-			MaxBackups: maxBackups,
-			MaxAge:     maxAge,
-			Compress:   compress,
-		})
-	default:
-		// Unknown output type, skip
-		return nil
-	}
-
-	return zapcore.NewCore(encoder, syncer, zapLevel)
-}
-
-// parseLogLevel converts string level to zapcore.Level
-func parseLogLevel(level string) zapcore.Level {
-	switch level {
-	case "debug":
-		return zap.DebugLevel
-	case "info":
-		return zap.InfoLevel
-	case "warn":
-		return zap.WarnLevel
-	case "error":
-		return zap.ErrorLevel
-	case "fatal":
-		return zap.FatalLevel
-	default:
-		return zap.InfoLevel
-	}
-}
-
-// createEncoder creates a zapcore.Encoder based on format
-func createEncoder(format string) zapcore.Encoder {
-	switch format {
-	case "console":
-		config := zap.NewDevelopmentEncoderConfig()
-		config.EncodeTime = zapcore.ISO8601TimeEncoder
-		return zapcore.NewConsoleEncoder(config)
-	case "json":
-		return zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
-	case "logfmt":
-		// Use console encoder with specific config for logfmt-like output
-		config := zap.NewProductionEncoderConfig()
-		config.EncodeTime = zapcore.ISO8601TimeEncoder
-		config.EncodeDuration = zapcore.StringDurationEncoder
-		config.EncodeCaller = zapcore.ShortCallerEncoder
-		return zapcore.NewConsoleEncoder(config)
-	default:
-		// Default to JSON
-		return zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
-	}
-}
-
