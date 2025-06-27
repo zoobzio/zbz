@@ -1,1 +1,0 @@
-Form input element definition with type, validation rules, and display properties.

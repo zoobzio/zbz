@@ -1,1 +1,0 @@
-Store and retrieve dynamic property values with CRUD operations.

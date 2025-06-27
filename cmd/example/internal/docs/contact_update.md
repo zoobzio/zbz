@@ -1,1 +1,0 @@
-Update an existing contact's information by ID.

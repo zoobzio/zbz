@@ -1,1 +1,0 @@
-Define form field types, validation rules, and display properties.

@@ -1,1 +1,0 @@
-Organization or business entity that can be associated with multiple contacts.

@@ -1,1 +1,0 @@
-Contact data for creation. Include name, email, and optionally phone and company_id.

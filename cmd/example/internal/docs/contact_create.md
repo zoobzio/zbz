@@ -1,1 +1,0 @@
-Add a new contact to the system. Email must be unique.

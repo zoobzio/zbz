@@ -1,1 +1,0 @@
-Manage company profiles and business entities through REST operations.

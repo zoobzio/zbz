@@ -1,1 +1,0 @@
-Individual person with email, phone, and company association. Email must be unique.
