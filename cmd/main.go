@@ -27,6 +27,9 @@ func init() {
 	// Add demo command
 	rootCmd.AddCommand(demoCmd)
 	
+	// Initialize test commands
+	initTestCommands()
+	
 	// Future commands can be added here:
 	// rootCmd.AddCommand(toolsCmd)
 	// rootCmd.AddCommand(benchCmd)

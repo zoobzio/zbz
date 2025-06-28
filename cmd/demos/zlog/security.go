@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"zbz/plugins/zlog-security"
+	"zbz/adapters/zlog/security"
 	zapProvider "zbz/providers/zlog-zap"
 	"zbz/zlog"
 )

@@ -1,0 +1,70 @@
+package capitan
+
+import (
+	"context"
+	"time"
+
+	"zbz/cereal"
+)
+
+// Public API for capitan hook system - uses concrete hooks, no reflection
+
+// RegisterInput registers a typed input handler for a specific hook type
+func RegisterInput[T any, H HookType](hookType H, handler InputHookFunc[T]) {
+	concrete := &ConcreteInputHook[T]{
+		hookType: hookType.String(),
+		handler:  handler,
+	}
+	serviceManager.register(hookType.String(), concrete)
+}
+
+// RegisterOutput registers a typed output handler for a specific hook type
+func RegisterOutput[T any, H HookType](hookType H, handler OutputHookFunc[T]) {
+	concrete := &ConcreteOutputHook[T]{
+		hookType: hookType.String(),
+		handler:  handler,
+	}
+	serviceManager.register(hookType.String(), concrete)
+}
+
+// RegisterTransform registers a typed transform handler
+func RegisterTransform[TIn, TOut any, HIn, HOut HookType](inputType HIn, outputType HOut, handler TransformHookFunc[TIn, TOut]) {
+	concrete := &ConcreteTransformHook[TIn, TOut]{
+		hookType:    inputType.String(),
+		outputType:  outputType.String(),
+		transformer: handler,
+	}
+	serviceManager.register(inputType.String(), concrete)
+}
+
+// Emit sends a typed event to all registered handlers
+func Emit[T any, H HookType](ctx context.Context, hookType H, source string, data T, metadata map[string]any) error {
+	// Create event structure
+	event := TypedEvent[T]{
+		Type:      hookType.String(),
+		Source:    source,
+		Timestamp: time.Now(),
+		Data:      data,
+		Context:   ctx,
+		Metadata:  metadata,
+	}
+
+	// Serialize once at the boundary
+	eventBytes, err := cereal.JSON.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	// Service layer gets pure bytes
+	return serviceManager.emitBytes(hookType.String(), eventBytes)
+}
+
+// GetStats returns basic statistics about the hook system
+func GetStats() HookStats {
+	return serviceManager.getStats()
+}
+
+// Reset clears all handlers - useful for testing
+func Reset() {
+	serviceManager.reset()
+}

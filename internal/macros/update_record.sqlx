@@ -1,6 +1,0 @@
--- Update specific columns in a given table for a row matching the primary key ID
---
--- @embed table     The name of the table to update
--- @embed columns   The columns to update as a string (e.g., "name, age")
--- @embed updates   The keys/values of a SET clause as a string using named parameters (e.g., "name = :name, age = :age")
-UPDATE "{{table}}" SET {{updates}} WHERE id = :id RETURNING {{columns}};

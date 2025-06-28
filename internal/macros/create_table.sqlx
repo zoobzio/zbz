@@ -1,5 +1,0 @@
--- Create a table
---
--- @embed table The name of the table to create  
--- @embed columns The columns to include in the table definition (e.x. "id INT PRIMARY KEY, name VARCHAR(100)")
-CREATE TABLE IF NOT EXISTS "{{table}}" ({{columns}});
