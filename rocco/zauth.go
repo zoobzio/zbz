@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"zbz/zlog"
+	"zbz/capitan"
 )
 
 // zAuth is the default implementation of the Auth interface
@@ -47,7 +49,16 @@ func NewAuth(opts ...AuthOption) Auth {
 	// Generate default JWT secret if not provided
 	if len(auth.jwtSecret) == 0 {
 		auth.jwtSecret = []byte("zbz-default-secret-change-me-in-production")
+		zlog.Warn("Using default JWT secret - change in production",
+			zlog.String("security_risk", "default_secret"),
+		)
 	}
+	
+	zlog.Info("Authentication service ready",
+		zlog.Duration("token_expiry", auth.tokenExpiry),
+		zlog.Duration("refresh_expiry", auth.refreshExpiry),
+		zlog.Int("providers_available", len(auth.providers)),
+	)
 	
 	return auth
 }
@@ -87,6 +98,11 @@ func (a *zAuth) RegisterProvider(name string, provider Provider) error {
 	
 	// Validate provider
 	if err := provider.Validate(); err != nil {
+		zlog.Error("Authentication provider validation failed",
+			zlog.String("provider", name),
+			zlog.String("provider_type", string(provider.Type())),
+			zlog.String("error", err.Error()),
+		)
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
 	
@@ -95,6 +111,16 @@ func (a *zAuth) RegisterProvider(name string, provider Provider) error {
 	// Set as default if it's the first provider
 	if len(a.providers) == 1 {
 		a.defaultProvider = name
+		zlog.Info("Default authentication provider configured",
+			zlog.String("provider", name),
+			zlog.String("provider_type", string(provider.Type())),
+		)
+	} else {
+		zlog.Info("Authentication provider registered",
+			zlog.String("provider", name),
+			zlog.String("provider_type", string(provider.Type())),
+			zlog.Int("total_providers", len(a.providers)),
+		)
 	}
 	
 	return nil
@@ -128,6 +154,8 @@ func (a *zAuth) SetDefaultProvider(name string) error {
 
 // Authenticate authenticates a user with the specified or default provider
 func (a *zAuth) Authenticate(ctx context.Context, credentials Credentials) (*Identity, error) {
+	start := time.Now()
+	
 	// Determine provider
 	providerName := credentials.Extra["provider"]
 	if providerName == "" {
@@ -136,14 +164,38 @@ func (a *zAuth) Authenticate(ctx context.Context, credentials Credentials) (*Ide
 		a.mu.RUnlock()
 	}
 	
+	zlog.Debug("Authentication attempt started",
+		zlog.String("provider", providerName),
+		zlog.String("username", credentials.Username),
+		zlog.String("credential_type", credentials.Type),
+	)
+	
 	provider, err := a.GetProvider(providerName)
 	if err != nil {
+		zlog.Error("Authentication provider not found",
+			zlog.String("provider", providerName),
+			zlog.String("username", credentials.Username),
+		)
 		return nil, err
 	}
 	
 	// Authenticate with provider
 	identity, err := provider.Authenticate(ctx, credentials)
 	if err != nil {
+		zlog.Warn("Authentication failed",
+			zlog.String("provider", providerName),
+			zlog.String("username", credentials.Username),
+			zlog.String("error", err.Error()),
+			zlog.Duration("duration", time.Since(start)),
+		)
+		// Emit failed auth event
+		capitan.EmitEvent("auth.failed", map[string]any{
+			"provider":  providerName,
+			"username":  credentials.Username,
+			"error":     err.Error(),
+			"timestamp": time.Now(),
+			"duration":  time.Since(start),
+		})
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 	
@@ -165,6 +217,26 @@ func (a *zAuth) Authenticate(ctx context.Context, credentials Credentials) (*Ide
 	identity.ExpiresAt = time.Now().Add(a.tokenExpiry)
 	identity.IssuedAt = time.Now()
 	identity.LastActive = time.Now()
+	
+	zlog.Info("User authenticated successfully",
+		zlog.String("user_id", identity.ID),
+		zlog.String("username", identity.Username),
+		zlog.String("provider", providerName),
+		zlog.String("email", identity.Email),
+		zlog.Strings("roles", identity.Roles),
+		zlog.Duration("duration", time.Since(start)),
+	)
+	
+	// Emit successful auth event
+	capitan.EmitEvent("auth.success", map[string]any{
+		"user_id":   identity.ID,
+		"username":  identity.Username,
+		"provider":  providerName,
+		"email":     identity.Email,
+		"roles":     identity.Roles,
+		"timestamp": time.Now(),
+		"duration":  time.Since(start),
+	})
 	
 	// Create session
 	session := &Session{

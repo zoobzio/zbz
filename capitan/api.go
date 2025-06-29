@@ -7,7 +7,7 @@ import (
 	"zbz/cereal"
 )
 
-// Public API for capitan hook system - uses concrete hooks, no reflection
+// Public API for capitan hook system - uses concrete hooks, no reflection\n\n// EmitEvent is a simple wrapper for emitting events without type constraints\nfunc EmitEvent(eventType string, data map[string]any) {\n\t// Simple event emission for logging/monitoring\n\t// Uses string hook type and empty context for convenience\n\tctx := context.Background()\n\tEmit(ctx, StringHookType(eventType), \"rocco\", data, data)\n}\n\n// StringHookType allows using string as hook type\ntype StringHookType string\n\nfunc (s StringHookType) String() string {\n\treturn string(s)\n}"
 
 // RegisterInput registers a typed input handler for a specific hook type
 func RegisterInput[T any, H HookType](hookType H, handler InputHookFunc[T]) {

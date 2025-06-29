@@ -8,7 +8,6 @@ require (
 	github.com/go-playground/validator/v10 v10.17.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	gopkg.in/yaml.v3 v3.0.1
-	zbz/catalog v0.0.0
 )
 
 replace zbz/catalog => ../catalog

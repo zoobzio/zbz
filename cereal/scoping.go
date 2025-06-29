@@ -537,3 +537,16 @@ func (cs *zCereal) getRedactedFloat(fieldType reflect.Type, constraints Validati
 	}
 	return reflect.ValueOf(value).Convert(fieldType)
 }
+
+
+// Public API for rocco integration
+
+// FilterByPermissions applies permission-based filtering to data structures
+func FilterByPermissions(data any, permissions []string) (any, error) {
+	return cereal.filterForMarshal(data, permissions), nil
+}
+
+// ValidatePermissions validates that input data doesn't violate permission constraints
+func ValidatePermissions(input any, permissions []string) error {
+	return cereal.validateUnmarshalPermissions(input, permissions)
+}

@@ -1,18 +1,191 @@
 package core
 
 import (
+	"context"
 	"fmt"
-	"reflect"
 	"sync"
+
+	"zbz/catalog"
+	"zbz/universal"
 )
 
-// Global registry for Core instances
-var (
-	registry     = make(map[string]any)
-	registryMu   sync.RWMutex
-	chainRegistry = make(map[string]ResourceChain)
-	chainMu      sync.RWMutex
-)
+// CoreService defines the non-generic interface that all Core[T] instances implement
+// This enables type-safe cross-service communication without casting
+type CoreService interface {
+	// Type identification
+	TypeName() string
+	
+	// Non-generic CRUD operations using ResourceURI
+	GetByURI(ctx context.Context, uri ResourceURI) (ZbzModelInterface, error)
+	SetByURI(ctx context.Context, uri ResourceURI, data ZbzModelInterface) error
+	DeleteByURI(ctx context.Context, uri ResourceURI) error
+	ExistsByURI(ctx context.Context, uri ResourceURI) (bool, error)
+	CountByURI(ctx context.Context, pattern ResourceURI) (int64, error)
+	
+	// Chain operations (non-generic)
+	GetChainByName(ctx context.Context, chainName string, params map[string]any) (ZbzModelInterface, error)
+	SetChainByName(ctx context.Context, chainName string, data ZbzModelInterface, params map[string]any) error
+	
+	// Provider management
+	ConfigureProviders(providers map[string]universal.Provider) error
+	GetProviderHealth() map[string]ProviderHealth
+	
+	// Metadata delegation to catalog (NO reflection in core!)
+	GetMetadata() catalog.ModelMetadata
+	GetFieldMetadata() []catalog.FieldMetadata
+	GetPermissionScopes() []string
+	GetValidationRules() []catalog.ValidationInfo
+	
+	// API contract publishing
+	PublishAPIContracts() []APIContract
+}
+
+// APIContract defines what endpoints a core handles
+type APIContract struct {
+	Endpoint    string                                      // "/api/users/{id}"
+	Method      string                                      // "GET", "POST", etc.
+	Operation   string                                      // "get", "create", "reset-password"
+	Scopes      []string                                    // ["user:read", "admin:users"]
+	InputType   string                                      // "User", "ResetPasswordRequest"
+	OutputType  string                                      // "User", "StatusResponse"
+	ResourceURI func(params map[string]string) ResourceURI  // Custom URI mapping
+}
+
+// ProviderHealth represents the health status of a provider
+type ProviderHealth struct {
+	Status    string                 `json:"status"`    // "healthy", "degraded", "unhealthy"
+	Message   string                 `json:"message"`
+	Details   map[string]interface{} `json:"details"`
+	Timestamp string                 `json:"timestamp"`
+}
+
+// Private singleton service layer
+var core *zCore
+var once sync.Once
+
+// zCore is the singleton service that manages all cores and API contracts
+type zCore struct {
+	registry     map[string]CoreService   // Core[T] instances by type name
+	apiRegistry  map[string]APIContract   // "GET:/api/users/{id}" -> contract
+	contractMap  map[string]string        // contract key -> core type mapping
+	chainRegistry map[string]ResourceChain // Global chain definitions
+	providers    map[string]universal.Provider // Global provider instances
+	mu           sync.RWMutex
+}
+
+// Service returns the singleton core service instance
+func Service() *zCore {
+	once.Do(func() {
+		core = &zCore{
+			registry:     make(map[string]CoreService),
+			apiRegistry:  make(map[string]APIContract),
+			contractMap:  make(map[string]string),
+			chainRegistry: make(map[string]ResourceChain),
+			providers:    make(map[string]universal.Provider),
+		}
+	})
+	return core
+}
+
+// Core service methods for managing cores and API contracts
+
+// RegisterCore registers a core instance and its API contracts
+func (c *zCore) RegisterCore(typeName string, coreService CoreService) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// Register the core instance
+	c.registry[typeName] = coreService
+	
+	// Get API contracts from the core and register them
+	contracts := coreService.PublishAPIContracts()
+	for _, contract := range contracts {
+		contractKey := fmt.Sprintf("%s:%s", contract.Method, contract.Endpoint)
+		c.apiRegistry[contractKey] = contract
+		c.contractMap[contractKey] = typeName
+	}
+	
+	return nil
+}
+
+// GetCoreServiceByTypeName retrieves a core service by type name (for cross-service access)
+func (c *zCore) GetCoreServiceByTypeName(typeName string) (CoreService, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	service, exists := c.registry[typeName]
+	if !exists {
+		return nil, fmt.Errorf("core service not found for type: %s", typeName)
+	}
+	return service, nil
+}
+
+// GetAPIContract looks up an API contract by HTTP method and path
+func (c *zCore) GetAPIContract(method, path string) (APIContract, CoreService, error) {
+	contractKey := fmt.Sprintf("%s:%s", method, path)
+	
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	contract, exists := c.apiRegistry[contractKey]
+	if !exists {
+		return APIContract{}, nil, fmt.Errorf("no contract found for %s", contractKey)
+	}
+	
+	typeName := c.contractMap[contractKey]
+	coreService := c.registry[typeName]
+	
+	return contract, coreService, nil
+}
+
+// ListCoreTypes returns all registered core type names
+func (c *zCore) ListCoreTypes() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	types := make([]string, 0, len(c.registry))
+	for typeName := range c.registry {
+		types = append(types, typeName)
+	}
+	return types
+}
+
+// ListAPIContracts returns all registered API contracts
+func (c *zCore) ListAPIContracts() []APIContract {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	contracts := make([]APIContract, 0, len(c.apiRegistry))
+	for _, contract := range c.apiRegistry {
+		contracts = append(contracts, contract)
+	}
+	return contracts
+}
+
+// Public API functions that delegate to the service
+
+// RegisterCore registers a core instance for type T
+func RegisterCore[T any](core Core[T]) error {
+	typeName := catalog.GetTypeName[T]()
+	
+	// Core[T] must also implement CoreService
+	coreService, ok := core.(CoreService)
+	if !ok {
+		return fmt.Errorf("core for type %s does not implement CoreService interface", typeName)
+	}
+	
+	return Service().RegisterCore(typeName, coreService)
+}
+
+// GetAPIContract looks up an API contract (for rocco)
+func GetAPIContract(method, path string) (APIContract, CoreService, error) {
+	return Service().GetAPIContract(method, path)
+}
+
+// GetCoreServiceByTypeName gets a core service by string type name (for cross-service access)
+func GetCoreServiceByTypeName(typeName string) (CoreService, error) {
+	return Service().GetCoreServiceByTypeName(typeName)
+}
 
 // Package-level API functions for clean usage
 
@@ -99,41 +272,29 @@ func SetChain[T any](chainName string, data ZbzModel[T], params map[string]any) 
 	return core.SetChain(chainName, data, params)
 }
 
-// Core management
-
-// RegisterCore registers a core instance for type T
-func RegisterCore[T any](core Core[T]) error {
-	var zero T
-	typeName := reflect.TypeOf(zero).String()
-	
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	
-	registry[typeName] = core
-	return nil
-}
+// Legacy core management (now handled by service layer)
 
 // GetCore retrieves the registered core for type T, creating one if it doesn't exist
 func GetCore[T any]() (Core[T], error) {
-	var zero T
-	typeName := reflect.TypeOf(zero).String()
+	typeName := catalog.GetTypeName[T]()
 	
-	registryMu.RLock()
-	if existing, exists := registry[typeName]; exists {
-		registryMu.RUnlock()
+	service := Service()
+	service.mu.RLock()
+	if existing, exists := service.registry[typeName]; exists {
+		service.mu.RUnlock()
 		if core, ok := existing.(Core[T]); ok {
 			return core, nil
 		}
 		return nil, fmt.Errorf("type assertion failed for core: %s", typeName)
 	}
-	registryMu.RUnlock()
+	service.mu.RUnlock()
 	
 	// Create new core if it doesn't exist
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	service.mu.Lock()
+	defer service.mu.Unlock()
 	
 	// Double-check after acquiring write lock
-	if existing, exists := registry[typeName]; exists {
+	if existing, exists := service.registry[typeName]; exists {
 		if core, ok := existing.(Core[T]); ok {
 			return core, nil
 		}
@@ -142,7 +303,12 @@ func GetCore[T any]() (Core[T], error) {
 	
 	// Create and register new core
 	newCore := NewCore[T]()
-	registry[typeName] = newCore
+	
+	// Register the core with the service
+	if err := RegisterCore(newCore); err != nil {
+		return nil, fmt.Errorf("failed to register core: %w", err)
+	}
+	
 	return newCore, nil
 }
 
@@ -153,33 +319,28 @@ func GetOrCreateCore[T any]() (Core[T], error) {
 
 // ListCores returns all registered core type names
 func ListCores() []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	
-	types := make([]string, 0, len(registry))
-	for typeName := range registry {
-		types = append(types, typeName)
-	}
-	return types
+	return Service().ListCoreTypes()
 }
 
 // Chain management at package level
 
 // RegisterChain registers a resource chain globally
 func RegisterChain(chain ResourceChain) error {
-	chainMu.Lock()
-	defer chainMu.Unlock()
+	service := Service()
+	service.mu.Lock()
+	defer service.mu.Unlock()
 	
-	chainRegistry[chain.Name] = chain
+	service.chainRegistry[chain.Name] = chain
 	return nil
 }
 
 // GetChainDefinition retrieves a chain definition by name
 func GetChainDefinition(name string) (ResourceChain, error) {
-	chainMu.RLock()
-	defer chainMu.RUnlock()
+	service := Service()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 	
-	chain, exists := chainRegistry[name]
+	chain, exists := service.chainRegistry[name]
 	if !exists {
 		return ResourceChain{}, fmt.Errorf("chain not found: %s", name)
 	}
@@ -189,11 +350,12 @@ func GetChainDefinition(name string) (ResourceChain, error) {
 
 // ListChains returns all registered chain names
 func ListChains() []string {
-	chainMu.RLock()
-	defer chainMu.RUnlock()
+	service := Service()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 	
-	names := make([]string, 0, len(chainRegistry))
-	for name := range chainRegistry {
+	names := make([]string, 0, len(service.chainRegistry))
+	for name := range service.chainRegistry {
 		names = append(names, name)
 	}
 	return names
@@ -305,12 +467,13 @@ func ConfigureDefaults() error {
 
 // Health check function
 func HealthCheck() map[string]any {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
+	service := Service()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 	
 	return map[string]any{
-		"registered_cores":  len(registry),
-		"registered_chains": len(chainRegistry),
+		"registered_cores":  len(service.registry),
+		"registered_chains": len(service.chainRegistry),
 		"core_types":        ListCores(),
 		"chain_names":       ListChains(),
 	}

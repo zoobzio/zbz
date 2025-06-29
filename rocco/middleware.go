@@ -6,6 +6,10 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
+	
+	"zbz/zlog"
+	"zbz/capitan"
 )
 
 // Middleware provides basic authentication middleware
@@ -23,6 +27,10 @@ func (a *zAuth) Middleware() func(http.Handler) http.Handler {
 			// Parse and validate token
 			claims, err := a.parseAccessToken(token)
 			if err != nil {
+				zlog.Debug("Invalid token provided",
+					zlog.String("error", err.Error()),
+					zlog.String("path", r.URL.Path),
+				)
 				// Invalid token, continue without identity
 				next.ServeHTTP(w, r)
 				return
@@ -53,6 +61,14 @@ func (a *zAuth) Middleware() func(http.Handler) http.Handler {
 			// Add identity to context
 			ctx := WithIdentity(r.Context(), identity)
 			
+			zlog.Debug("Request authenticated",
+				zlog.String("user_id", identity.ID),
+				zlog.String("username", identity.Username),
+				zlog.String("path", r.URL.Path),
+				zlog.String("method", r.Method),
+				zlog.Strings("roles", identity.Roles),
+			)
+			
 			// Continue with identity in context
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -63,6 +79,8 @@ func (a *zAuth) Middleware() func(http.Handler) http.Handler {
 func (a *zAuth) BouncerMiddleware(rules ...BouncerRule) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			
 			// Find matching rule
 			var matchedRule *BouncerRule
 			for i := range rules {
@@ -74,15 +92,58 @@ func (a *zAuth) BouncerMiddleware(rules ...BouncerRule) func(http.Handler) http.
 			
 			// If no rule matches, allow through
 			if matchedRule == nil {
+				zlog.Debug("No authorization rule matched - allowing access",
+					zlog.String("path", r.URL.Path),
+					zlog.String("method", r.Method),
+				)
 				next.ServeHTTP(w, r)
 				return
 			}
 			
+			zlog.Debug("Authorization rule matched",
+				zlog.String("rule_name", matchedRule.Name),
+				zlog.String("path", r.URL.Path),
+				zlog.String("method", r.Method),
+			)
+			
 			// Apply the bouncer rule
 			if err := a.applyBouncerRule(matchedRule, w, r); err != nil {
+				zlog.Warn("Authorization denied",
+					zlog.String("rule_name", matchedRule.Name),
+					zlog.String("path", r.URL.Path),
+					zlog.String("method", r.Method),
+					zlog.String("error", err.Error()),
+					zlog.Duration("duration", time.Since(start)),
+				)
+				
+				// Emit authorization denied event
+				capitan.EmitEvent("auth.denied", map[string]any{
+					"rule_name": matchedRule.Name,
+					"path":      r.URL.Path,
+					"method":    r.Method,
+					"error":     err.Error(),
+					"timestamp": time.Now(),
+					"duration":  time.Since(start),
+				})
 				// Rule failed, request has been handled by failure handler
 				return
 			}
+			
+			zlog.Debug("Authorization granted",
+				zlog.String("rule_name", matchedRule.Name),
+				zlog.String("path", r.URL.Path),
+				zlog.String("method", r.Method),
+				zlog.Duration("duration", time.Since(start)),
+			)
+			
+			// Emit authorization granted event
+			capitan.EmitEvent("auth.granted", map[string]any{
+				"rule_name": matchedRule.Name,
+				"path":      r.URL.Path,
+				"method":    r.Method,
+				"timestamp": time.Now(),
+				"duration":  time.Since(start),
+			})
 			
 			// Rule passed, continue
 			next.ServeHTTP(w, r)
@@ -174,15 +235,69 @@ func (a *zAuth) applyBouncerRule(rule *BouncerRule, w http.ResponseWriter, r *ht
 		// Extract resource from request content
 		resource, err := rule.ContentInspector(r)
 		if err != nil {
+			zlog.Error("Content inspection failed",
+				zlog.String("rule_name", rule.Name),
+				zlog.String("path", r.URL.Path),
+				zlog.String("error", err.Error()),
+			)
 			a.handleRuleFailure(rule, w, r, fmt.Errorf("content inspection failed: %w", err))
 			return err
 		}
 		
+		zlog.Debug("Resource extracted from request",
+			zlog.String("rule_name", rule.Name),
+			zlog.String("resource_type", resource.Type),
+			zlog.String("resource_id", resource.ID),
+			zlog.String("action", resource.Action),
+		)
+		
 		// Authorize access to the resource
 		if err := rule.Authorizer(identity, resource); err != nil {
+			zlog.Warn("Resource access denied",
+				zlog.String("rule_name", rule.Name),
+				zlog.String("user_id", identity.ID),
+				zlog.String("username", identity.Username),
+				zlog.String("resource_type", resource.Type),
+				zlog.String("resource_id", resource.ID),
+				zlog.String("action", resource.Action),
+				zlog.String("error", err.Error()),
+			)
+			
+			// Emit resource access denied event
+			capitan.EmitEvent("auth.resource_denied", map[string]any{
+				"rule_name":     rule.Name,
+				"user_id":       identity.ID,
+				"username":      identity.Username,
+				"resource_type": resource.Type,
+				"resource_id":   resource.ID,
+				"action":        resource.Action,
+				"error":         err.Error(),
+				"timestamp":     time.Now(),
+			})
+			
 			a.handleRuleFailure(rule, w, r, fmt.Errorf("authorization failed: %w", err))
 			return err
 		}
+		
+		zlog.Info("Resource access granted",
+			zlog.String("rule_name", rule.Name),
+			zlog.String("user_id", identity.ID),
+			zlog.String("username", identity.Username),
+			zlog.String("resource_type", resource.Type),
+			zlog.String("resource_id", resource.ID),
+			zlog.String("action", resource.Action),
+		)
+		
+		// Emit resource access granted event
+		capitan.EmitEvent("auth.resource_granted", map[string]any{
+			"rule_name":     rule.Name,
+			"user_id":       identity.ID,
+			"username":      identity.Username,
+			"resource_type": resource.Type,
+			"resource_id":   resource.ID,
+			"action":        resource.Action,
+			"timestamp":     time.Now(),
+		})
 	}
 	
 	// Rule passed, call success handler if defined

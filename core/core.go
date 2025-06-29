@@ -1,11 +1,16 @@
 package core
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
-	"github.com/zbz/zlog"
+	"zbz/catalog"
+	"zbz/universal"
+	"zbz/zlog"
 )
 
 // ResourceURI represents a resource identifier (simplified for standalone testing)
@@ -126,7 +131,6 @@ type LifecycleProvider interface {
 // coreImpl implements the Core interface
 type coreImpl[T any] struct {
 	typeName string
-	typeRef  reflect.Type
 	
 	// Hook storage
 	beforeCreateHooks map[HookID]BeforeCreateHook[T]
@@ -148,26 +152,18 @@ type coreImpl[T any] struct {
 
 // NewCore creates a new Core instance for type T
 func NewCore[T any]() Core[T] {
-	var zero T
-	typeRef := reflect.TypeOf(zero)
-	typeName := typeRef.String()
+	typeName := catalog.GetTypeName[T]()
 	
 	// Log core creation
 	zlog.Info("Creating new Core instance",
 		zlog.String("type", typeName),
 	)
 	
-	// Pre-warm the type metadata cache
-	if typeRef.Kind() == reflect.Struct || (typeRef.Kind() == reflect.Ptr && typeRef.Elem().Kind() == reflect.Struct) {
-		getTypeMetadata(typeRef)
-		zlog.Debug("Type metadata precomputed",
-			zlog.String("type", typeName),
-		)
-	}
+	// Trigger metadata extraction in catalog (lazy)
+	catalog.Select[T]()
 	
 	return &coreImpl[T]{
 		typeName:          typeName,
-		typeRef:           typeRef,
 		beforeCreateHooks: make(map[HookID]BeforeCreateHook[T]),
 		afterCreateHooks:  make(map[HookID]AfterCreateHook[T]),
 		beforeUpdateHooks: make(map[HookID]BeforeUpdateHook[T]),
@@ -324,11 +320,191 @@ func (c *coreImpl[T]) ExecuteMany(operations []Operation) ([]any, error) {
 // Type metadata
 
 func (c *coreImpl[T]) Type() reflect.Type {
-	return c.typeRef
+	var zero T
+	return reflect.TypeOf(zero)
 }
 
 func (c *coreImpl[T]) TypeName() string {
 	return c.typeName
+}
+
+// CoreService interface implementation (non-generic methods)
+
+func (c *coreImpl[T]) GetByURI(ctx context.Context, uri ResourceURI) (ZbzModelInterface, error) {
+	result, err := c.Get(uri)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *coreImpl[T]) SetByURI(ctx context.Context, uri ResourceURI, data ZbzModelInterface) error {
+	// Convert ZbzModelInterface back to ZbzModel[T]
+	if zbzModel, ok := data.(*ZbzModel[T]); ok {
+		return c.Set(uri, *zbzModel)
+	}
+	return fmt.Errorf("invalid data type for SetByURI")
+}
+
+func (c *coreImpl[T]) DeleteByURI(ctx context.Context, uri ResourceURI) error {
+	return c.Delete(uri)
+}
+
+func (c *coreImpl[T]) ExistsByURI(ctx context.Context, uri ResourceURI) (bool, error) {
+	return c.Exists(uri)
+}
+
+func (c *coreImpl[T]) CountByURI(ctx context.Context, pattern ResourceURI) (int64, error) {
+	return c.Count(pattern)
+}
+
+func (c *coreImpl[T]) GetChainByName(ctx context.Context, chainName string, params map[string]any) (ZbzModelInterface, error) {
+	result, err := c.GetChain(chainName, params)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *coreImpl[T]) SetChainByName(ctx context.Context, chainName string, data ZbzModelInterface, params map[string]any) error {
+	if zbzModel, ok := data.(*ZbzModel[T]); ok {
+		return c.SetChain(chainName, *zbzModel, params)
+	}
+	return fmt.Errorf("invalid data type for SetChainByName")
+}
+
+func (c *coreImpl[T]) ConfigureProviders(providers map[string]universal.Provider) error {
+	// Implementation will be added when we work on provider configuration
+	return fmt.Errorf("provider configuration not yet implemented")
+}
+
+func (c *coreImpl[T]) GetProviderHealth() map[string]ProviderHealth {
+	// Implementation will be added when we work on provider health
+	return make(map[string]ProviderHealth)
+}
+
+// Metadata delegation to catalog (NO reflection in core!)
+func (c *coreImpl[T]) GetMetadata() catalog.ModelMetadata {
+	return catalog.Select[T]()
+}
+
+func (c *coreImpl[T]) GetFieldMetadata() []catalog.FieldMetadata {
+	return c.GetMetadata().Fields
+}
+
+func (c *coreImpl[T]) GetPermissionScopes() []string {
+	metadata := c.GetMetadata()
+	var scopes []string
+	for _, field := range metadata.Fields {
+		scopes = append(scopes, field.Scopes...)
+	}
+	
+	// Add model-level scopes if type implements conventions
+	for _, function := range metadata.Functions {
+		if function.Convention == "ScopeProvider" {
+			// Type implements ScopeProvider - could call the method here
+			break
+		}
+	}
+	
+	return uniqueStrings(scopes)
+}
+
+func (c *coreImpl[T]) GetValidationRules() []catalog.ValidationInfo {
+	metadata := c.GetMetadata()
+	var rules []catalog.ValidationInfo
+	for _, field := range metadata.Fields {
+		if field.Validation.Required || len(field.Validation.CustomRules) > 0 {
+			rules = append(rules, field.Validation)
+		}
+	}
+	return rules
+}
+
+func (c *coreImpl[T]) PublishAPIContracts() []APIContract {
+	// Generate default CRUD contracts
+	typeName := c.GetMetadata().TypeName
+	collection := strings.ToLower(typeName + "s")
+	
+	var contracts []APIContract
+	
+	// GET /api/{collection}/{id} - get single resource
+	contracts = append(contracts, APIContract{
+		Endpoint:   fmt.Sprintf("/api/%s/{id}", collection),
+		Method:     "GET",
+		Operation:  "get",
+		Scopes:     []string{fmt.Sprintf("%s:read", strings.ToLower(typeName))},
+		OutputType: typeName,
+		ResourceURI: func(params map[string]string) ResourceURI {
+			return ResourceURI{URI: fmt.Sprintf("db://%s/%s", collection, params["id"])}
+		},
+	})
+	
+	// GET /api/{collection} - list resources
+	contracts = append(contracts, APIContract{
+		Endpoint:   fmt.Sprintf("/api/%s", collection),
+		Method:     "GET",
+		Operation:  "list",
+		Scopes:     []string{fmt.Sprintf("%s:read", strings.ToLower(typeName))},
+		OutputType: fmt.Sprintf("[]%s", typeName),
+		ResourceURI: func(params map[string]string) ResourceURI {
+			return ResourceURI{URI: fmt.Sprintf("db://%s/*", collection)}
+		},
+	})
+	
+	// POST /api/{collection} - create resource
+	contracts = append(contracts, APIContract{
+		Endpoint:   fmt.Sprintf("/api/%s", collection),
+		Method:     "POST",
+		Operation:  "create",
+		Scopes:     []string{fmt.Sprintf("%s:write", strings.ToLower(typeName))},
+		InputType:  typeName,
+		OutputType: typeName,
+		ResourceURI: func(params map[string]string) ResourceURI {
+			return ResourceURI{URI: fmt.Sprintf("db://%s", collection)}
+		},
+	})
+	
+	// PUT /api/{collection}/{id} - update resource
+	contracts = append(contracts, APIContract{
+		Endpoint:   fmt.Sprintf("/api/%s/{id}", collection),
+		Method:     "PUT",
+		Operation:  "update",
+		Scopes:     []string{fmt.Sprintf("%s:write", strings.ToLower(typeName))},
+		InputType:  typeName,
+		OutputType: typeName,
+		ResourceURI: func(params map[string]string) ResourceURI {
+			return ResourceURI{URI: fmt.Sprintf("db://%s/%s", collection, params["id"])}
+		},
+	})
+	
+	// DELETE /api/{collection}/{id} - delete resource
+	contracts = append(contracts, APIContract{
+		Endpoint:   fmt.Sprintf("/api/%s/{id}", collection),
+		Method:     "DELETE",
+		Operation:  "delete",
+		Scopes:     []string{fmt.Sprintf("%s:delete", strings.ToLower(typeName))},
+		ResourceURI: func(params map[string]string) ResourceURI {
+			return ResourceURI{URI: fmt.Sprintf("db://%s/%s", collection, params["id"])}
+		},
+	})
+	
+	return contracts
+}
+
+// Helper function for unique strings
+func uniqueStrings(slice []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	
+	for _, str := range slice {
+		if !seen[str] && str != "" {
+			seen[str] = true
+			result = append(result, str)
+		}
+	}
+	
+	return result
 }
 
 // Common errors

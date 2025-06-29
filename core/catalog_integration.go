@@ -3,6 +3,8 @@ package core
 import (
 	"reflect"
 	"sync"
+	
+	"zbz/zlog"
 )
 
 // TypeMetadata caches reflection-based metadata for types

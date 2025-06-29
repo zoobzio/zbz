@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/zbz/cereal"
-	"github.com/zbz/zlog"
+	"zbz/cereal"
+	"zbz/zlog"
 )
 
 // ZbzModel wraps user types into ZBZ-native entities with standard fields and behaviors

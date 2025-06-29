@@ -197,12 +197,32 @@ func (pb *ProxyBuilder) BuildProxy(client any) any {
 	return proxyValue.Addr().Interface()
 }
 
+// UniversalHookType represents hook types for universal package events
+type UniversalHookType int
+
 // Common hook types for instrumented operations
 const (
-	NativeMethodStarted   UniversalHookType = iota + 3100
-	NativeMethodCompleted
-	NativeMethodError
+	NativeMethodStarted   UniversalHookType = 3100
+	NativeMethodCompleted UniversalHookType = 3101
+	NativeMethodError     UniversalHookType = 3102
+	DataOperation         UniversalHookType = 3103
 )
+
+// String implements capitan.HookType interface
+func (h UniversalHookType) String() string {
+	switch h {
+	case NativeMethodStarted:
+		return "NativeMethodStarted"
+	case NativeMethodCompleted:
+		return "NativeMethodCompleted"
+	case NativeMethodError:
+		return "NativeMethodError"
+	case DataOperation:
+		return "DataOperation"
+	default:
+		return "UnknownUniversalHookType"
+	}
+}
 
 // NativeMethodData contains data for native method call hooks
 type NativeMethodData struct {
@@ -266,13 +286,13 @@ func (pi *ProviderInstrumentation) EmitOperation(ctx context.Context, operation,
 		errorMsg = err.Error()
 	}
 	
-	pi.hookEmitter.Emit(ctx, DataGet, pi.providerType, DataOperationData{
-		Operation: operation,
-		URI:       uri,
-		Provider:  pi.providerType,
-		Duration:  duration,
-		Error:     errorMsg,
-		Timestamp: time.Now(),
+	pi.hookEmitter.Emit(ctx, DataOperation, pi.providerType, map[string]any{
+		"operation": operation,
+		"uri":       uri,
+		"provider":  pi.providerType,
+		"duration":  duration,
+		"error":     errorMsg,
+		"timestamp": time.Now(),
 	}, nil)
 }
 
