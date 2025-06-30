@@ -15,6 +15,10 @@ replace zbz/depot => ./depot
 
 replace zbz/cereal => ./cereal
 
+replace zbz/catalog => ./catalog
+
+replace zbz/pipz => ./pipz
+
 replace zbz/pocket => ./pocket
 
 replace zbz/providers/zlog-zap => ./providers/zlog-zap

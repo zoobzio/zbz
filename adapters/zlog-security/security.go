@@ -14,6 +14,21 @@ import (
 	"zbz/zlog"
 )
 
+// Security field types defined by this adapter
+const (
+	SecretType = zlog.FieldType("secret") // Encrypt sensitive data
+	PIIType    = zlog.FieldType("pii")    // Redact/hash PII based on compliance
+)
+
+// Security field constructors
+func Secret(key, value string) zlog.Field {
+	return zlog.Field{Key: key, Type: SecretType, Value: value}
+}
+
+func PII(key, value string) zlog.Field {
+	return zlog.Field{Key: key, Type: PIIType, Value: value}
+}
+
 // Config holds security processor configuration
 type Config struct {
 	// Encryption key for secrets (32 bytes for AES-256)
@@ -45,17 +60,18 @@ func Register(config Config) error {
 		return fmt.Errorf("encryption key must be 32 bytes for AES-256")
 	}
 	
-	// Register secret processor
-	zlog.Process(zlog.SecretType, secretProcessor(config))
+	// Register secret processor - CRITICAL: This runs before event emission
+	zlog.RegisterFieldProcessor(SecretType, secretProcessor(config))
 	
-	// Register PII processor
-	zlog.Process(zlog.PIIType, piiProcessor(config))
+	// Register PII processor - CRITICAL: This runs before event emission  
+	zlog.RegisterFieldProcessor(PIIType, piiProcessor(config))
 	
 	return nil
 }
 
 // secretProcessor handles encryption of secret fields
-func secretProcessor(config Config) zlog.Processor {
+// CRITICAL: Returns StringType fields so downstream systems only see processed values
+func secretProcessor(config Config) zlog.FieldProcessor {
 	return func(field zlog.Field) []zlog.Field {
 		value, ok := field.Value.(string)
 		if !ok {
@@ -74,7 +90,7 @@ func secretProcessor(config Config) zlog.Processor {
 			// On encryption failure, redact
 			return []zlog.Field{
 				zlog.String(field.Key, "***ENCRYPTION_FAILED***"),
-				zlog.Err(err),
+				zlog.String(field.Key+"_error", err.Error()),
 			}
 		}
 		
@@ -86,7 +102,8 @@ func secretProcessor(config Config) zlog.Processor {
 }
 
 // piiProcessor handles PII based on configured mode
-func piiProcessor(config Config) zlog.Processor {
+// CRITICAL: Returns StringType fields so downstream systems only see processed values
+func piiProcessor(config Config) zlog.FieldProcessor {
 	return func(field zlog.Field) []zlog.Field {
 		value, ok := field.Value.(string)
 		if !ok {
@@ -161,7 +178,7 @@ func partialMask(value string) string {
 // Additional security utilities
 
 // ScanForSensitive checks any string field for sensitive patterns
-func ScanForSensitive(patterns []*regexp.Regexp) zlog.Processor {
+func ScanForSensitive(patterns []*regexp.Regexp) zlog.FieldProcessor {
 	return func(field zlog.Field) []zlog.Field {
 		// Only process string fields
 		if field.Type != zlog.StringType {
@@ -189,7 +206,7 @@ func ScanForSensitive(patterns []*regexp.Regexp) zlog.Processor {
 }
 
 // MaskIP replaces IP addresses with hashed versions for privacy
-func MaskIP() zlog.Processor {
+func MaskIP() zlog.FieldProcessor {
 	ipPattern := regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	
 	return func(field zlog.Field) []zlog.Field {

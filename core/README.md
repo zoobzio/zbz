@@ -11,6 +11,38 @@ The Core package provides the foundational data access layer for ZBZ application
 - **Pure Business Logic**: No context dependencies - rocco handles auth/security
 - **Provider Agnostic**: Works with any universal provider (database, cache, search, etc.)
 
+## 🚨 ARCHITECTURE NOTE - CEREAL REFACTOR INSIGHT
+
+**CRITICAL DISCOVERY**: During cereal's nuclear architecture refactor, we identified that **core should be the orchestrator for value extraction from user types**. 
+
+**Current Gap**: cereal needs both:
+1. **Metadata** (provided by catalog) ✅  
+2. **Values** (should be provided by core) ❌
+
+**Future Core Responsibility**: Core should provide a unified interface for working with user data that abstracts value extraction:
+
+```go
+// Core should orchestrate both metadata + value access
+type Core[T any] interface {
+    GetMetadata() catalog.ModelMetadata
+    GetFieldValues(instance T) map[string]any
+    SetFieldValue(instance *T, fieldName string, value any) error
+}
+
+// cereal uses core's interface, not direct reflection
+func (cs *CatalogScoper) FilterForMarshal(coreInstance CoreInstance, permissions []string) any {
+    metadata := coreInstance.GetMetadata()  // catalog
+    values := coreInstance.GetFieldValues()  // core's responsibility
+}
+```
+
+**Dependencies should be**:
+- catalog: Pure metadata extraction (no values)
+- core: Type registration + value access orchestration  
+- cereal: Uses core's interface (no direct reflection)
+
+**TODO**: Implement value accessor pattern in core during audit.
+
 ## Quick Start
 
 ### Basic Usage

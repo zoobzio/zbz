@@ -1,8 +1,5 @@
 package cereal
 
-// Private singleton for scoping logic
-var cereal *zCereal
-
 // Public singletons for each format
 var (
 	JSON *zJSON
@@ -11,11 +8,7 @@ var (
 )
 
 func init() {
-	// Initialize scoping service
-	cereal = &zCereal{
-		cache: newScopeCache(),
-	}
-
+	// Initialize format handlers
 	JSON = &zJSON{}
 	YAML = &zYaml{}
 	TOML = &zTOML{}

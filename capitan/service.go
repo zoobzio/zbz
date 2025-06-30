@@ -2,9 +2,6 @@ package capitan
 
 import (
 	"sync"
-	"time"
-
-	"zbz/zlog"
 )
 
 // ServiceManager provides byte-based event processing with no reflection
@@ -28,16 +25,10 @@ func (s *ServiceManager) register(hookType string, handler ByteHandler) {
 	s.handlers[hookType] = append(s.handlers[hookType], handler)
 	s.stats.HookTypes[hookType]++
 	s.stats.TotalHandlers++
-
-	zlog.Debug("Registered hook handler",
-		zlog.String("hook_type", hookType),
-		zlog.Int("total_for_type", s.stats.HookTypes[hookType]))
 }
 
 // emitBytes sends bytes to all registered handlers for a hook type
 func (s *ServiceManager) emitBytes(hookType string, eventBytes []byte) error {
-	start := time.Now()
-
 	s.mu.RLock()
 	handlers := make([]ByteHandler, len(s.handlers[hookType]))
 	copy(handlers, s.handlers[hookType])
@@ -46,17 +37,10 @@ func (s *ServiceManager) emitBytes(hookType string, eventBytes []byte) error {
 	// Execute all handlers for this hook type
 	for _, handler := range handlers {
 		if err := handler.Handle(eventBytes); err != nil {
-			zlog.Error("Hook handler failed",
-				zlog.String("hook_type", hookType),
-				zlog.Err(err))
+			// Silent failure to avoid circular logging
+			_ = err
 		}
 	}
-
-	processingTime := time.Since(start)
-	zlog.Debug("Hook processing completed",
-		zlog.String("hook_type", hookType),
-		zlog.Duration("processing_time", processingTime),
-		zlog.Int("handler_count", len(handlers)))
 
 	return nil
 }

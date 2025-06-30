@@ -11,28 +11,22 @@ type Field struct {
 	Value any
 }
 
-// FieldType defines the type of a log field for type safety
-type FieldType int
+// FieldType defines the type of a log field - string-based for adapter extensibility
+type FieldType string
 
 const (
-	// Regular field types
-	StringType FieldType = iota
-	IntType
-	Int64Type
-	Float64Type
-	BoolType
-	ErrorType
-	DurationType
-	TimeType
-	ByteStringType
-	AnyType
-	StringsType
-
-	// Special field types (processed by pipeline before driver)
-	SecretType      // Encrypt sensitive data
-	PIIType         // Redact/hash PII based on compliance
-	MetricType      // Inject performance metrics
-	CorrelationType // Propagate correlation IDs
+	// Core field types (only what zlog needs internally)
+	StringType     FieldType = "string"
+	IntType        FieldType = "int"
+	Int64Type      FieldType = "int64"
+	Float64Type    FieldType = "float64"
+	BoolType       FieldType = "bool"
+	ErrorType      FieldType = "error"
+	DurationType   FieldType = "duration"
+	TimeType       FieldType = "time"
+	ByteStringType FieldType = "bytestring"
+	AnyType        FieldType = "any"
+	StringsType    FieldType = "strings"
 )
 
 // Type-safe field constructors (zap-like API)
@@ -80,24 +74,4 @@ func Strings(key string, value []string) Field {
 	return Field{Key: key, Type: StringsType, Value: value}
 }
 
-// Special field constructors for pipeline processing
 
-// Secret marks sensitive data for encryption in logs
-func Secret(key, value string) Field {
-	return Field{Key: key, Type: SecretType, Value: value}
-}
-
-// PII marks personally identifiable information for redaction/hashing
-func PII(key, value string) Field {
-	return Field{Key: key, Type: PIIType, Value: value}
-}
-
-// Metric injects performance metrics into logs
-func Metric(key string, value any) Field {
-	return Field{Key: key, Type: MetricType, Value: value}
-}
-
-// Correlation extracts trace/request context for distributed tracing
-func Correlation(ctx any) Field {
-	return Field{Key: "_correlation", Type: CorrelationType, Value: ctx}
-}

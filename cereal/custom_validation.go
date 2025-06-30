@@ -281,9 +281,10 @@ func RegisterBuiltinValidators() error {
 }
 
 // getCustomRedactedValue returns redaction value for registered custom validators
-func (cs *zCereal) getCustomRedactedValue(validateTag string, fieldType reflect.Type) (reflect.Value, bool) {
+// Updated to work with new field processor system
+func getCustomRedactedValue(validateTag string, fieldType string) (any, bool) {
 	if redactionValue, exists := getRegisteredRedactionValue(validateTag); exists {
-		return reflect.ValueOf(redactionValue), true
+		return redactionValue, true
 	}
-	return reflect.Value{}, false
+	return nil, false
 }
